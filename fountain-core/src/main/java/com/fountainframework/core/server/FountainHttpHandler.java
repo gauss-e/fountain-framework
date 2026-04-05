@@ -5,6 +5,7 @@ import com.fountainframework.core.http.HttpHeaders;
 import com.fountainframework.core.http.HttpMethod;
 import com.fountainframework.core.http.HttpResponse;
 import com.fountainframework.core.http.HttpVersion;
+import com.fountainframework.core.router.Router;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
@@ -17,27 +18,51 @@ import org.slf4j.LoggerFactory;
 import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 
 /**
- * Netty channel handler that converts Netty HTTP objects to Fountain types,
- * dispatches to the route handler, and writes the response.
+ * Netty channel handler that converts Netty HTTP objects to Fountain types
+ * and dispatches handler execution to the virtual thread pool.
+ * <p>
+ * Netty I/O thread: parse request -> Virtual thread: run handler -> Netty I/O thread: write response
+ * <p>
+ * Concurrency is bounded by the fixed-size virtual thread pool — when all threads
+ * are busy, new tasks queue until a thread becomes available.
  */
 public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     private static final Logger log = LoggerFactory.getLogger(FountainHttpHandler.class);
-    private final RequestDispatcher dispatcher;
+    private final Router router;
+    private final ExecutorService virtualThreadPool;
 
-    public FountainHttpHandler(RequestDispatcher dispatcher) {
-        this.dispatcher = dispatcher;
+    public FountainHttpHandler(Router router, ExecutorService virtualThreadPool) {
+        this.router = router;
+        this.virtualThreadPool = virtualThreadPool;
     }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest nettyRequest) {
         FountainPoolRequest request = convertRequest(ctx, nettyRequest);
+        boolean keepAlive = request.isKeepAlive();
+
         log.debug("{} {} from {}", request.method(), request.path(), request.remoteAddress());
 
-        HttpResponse response = dispatcher.dispatch(request);
-        writeResponse(ctx, request, response);
+        virtualThreadPool.execute(() -> {
+            HttpResponse response;
+            try {
+                response = router.handle(request);
+                if (response == null) {
+                    response = HttpResponse.notFound();
+                }
+            } catch (Exception e) {
+                log.error("Error handling {} {}", request.method(), request.path(), e);
+                response = HttpResponse.error("Internal Server Error");
+            }
+
+            HttpResponse finalResponse = response;
+            ctx.channel().eventLoop().execute(() ->
+                    writeResponse(ctx, keepAlive, finalResponse));
+        });
     }
 
     private FountainPoolRequest convertRequest(ChannelHandlerContext ctx, FullHttpRequest nettyRequest) {
@@ -68,7 +93,7 @@ public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpReq
                 .build();
     }
 
-    private void writeResponse(ChannelHandlerContext ctx, FountainPoolRequest request, HttpResponse response) {
+    private void writeResponse(ChannelHandlerContext ctx, boolean keepAlive, HttpResponse response) {
         byte[] body = response.body();
         ByteBuf content = Unpooled.wrappedBuffer(body);
 
@@ -78,7 +103,6 @@ public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpReq
                 content
         );
 
-        // Copy headers
         for (Map.Entry<String, List<String>> entry : response.headers()) {
             for (String value : entry.getValue()) {
                 nettyResponse.headers().add(entry.getKey(), value);
@@ -86,7 +110,6 @@ public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpReq
         }
         nettyResponse.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, body.length);
 
-        boolean keepAlive = request.isKeepAlive();
         if (keepAlive) {
             nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
             ctx.writeAndFlush(nettyResponse);

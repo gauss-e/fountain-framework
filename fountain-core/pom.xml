@@ -15,11 +15,6 @@
     <description>Core HTTP server framework built on Netty</description>
 
     <dependencies>
-        <dependency>
-            <groupId>com.fountainframework</groupId>
-            <artifactId>fountain-common</artifactId>
-        </dependency>
-
         <!-- Netty -->
         <dependency>
             <groupId>io.netty</groupId>
@@ -38,6 +33,18 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- ASM (bytecode scanning) -->
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm</artifactId>
+        </dependency>
+
+        <!-- SnakeYAML -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
         </dependency>
 
         <!-- Logging -->

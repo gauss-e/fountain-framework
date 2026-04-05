@@ -1,104 +1,41 @@
 package com.fountainframework.example;
 
-import com.fountainframework.core.FountainApplication;
-import com.fountainframework.core.annotation.*;
-import com.fountainframework.core.http.FountainPoolRequest;
+import com.fountainframework.core.Fountain;
 import com.fountainframework.core.http.HttpResponse;
-
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import com.fountainframework.core.router.FountainRouter;
+import com.fountainframework.core.router.Router;
+import com.fountainframework.core.router.RouterConfigurer;
 
 /**
- * Example application demonstrating Fountain framework features.
- * Start it and try:
- *   GET  http://localhost:8080/hello
- *   GET  http://localhost:8080/hello?name=World
- *   GET  http://localhost:8080/users
- *   POST http://localhost:8080/users        (JSON body: {"name":"Alice","email":"alice@example.com"})
- *   GET  http://localhost:8080/users/1
- *   DELETE http://localhost:8080/users/1
+ * Example application demonstrating Fountain's Spring Boot-like startup.
+ * <p>
+ * {@code Fountain.run(ExampleApp.class)} scans this package for
+ * {@code @FountainRouter} classes (including inner classes and meta-annotations)
+ * and auto-registers their routes.
+ * <p>
+ * Port and virtual thread pool size are configured via {@code config.properties}
+ * or {@code application.properties} in the classpath. Defaults: port=8080, virtualthread.num=1000.
+ *
+ * @see UserRoutes        — direct @FountainRouter
+ * @see StatusRoutes      — via custom meta-annotation @ApiRouter
+ * @see HealthRoutes      — inner class with @FountainRouter
  */
 public class ExampleApp {
 
     public static void main(String[] args) {
-        int port = args.length > 0 ? Integer.parseInt(args[0]) : 8080;
-
-        FountainApplication.create()
-                .register(new HelloController(), new UserController())
-                .start(port);
+        Fountain.run(ExampleApp.class).start();
     }
 
-    // --- Hello Controller ---
-
-    public static class HelloController {
-
-        @Get("/hello")
-        public HttpResponse hello(FountainPoolRequest request) {
-            String name = request.queryParameter("name");
-            if (name == null) {
-                name = "Fountain";
-            }
-            return HttpResponse.ok("Hello, " + name + "!");
-        }
-
-        @Get("/")
-        public HttpResponse index() {
-            return HttpResponse.json("""
-                    {"message":"Welcome to Fountain Framework","version":"1.0.0"}""");
-        }
-    }
-
-    // --- User Controller with CRUD ---
-
-    public static class UserController {
-
-        private final Map<Long, User> users = new ConcurrentHashMap<>();
-        private final AtomicLong idGenerator = new AtomicLong(1);
-
-        @Get("/users")
-        public List<User> listUsers() {
-            return List.copyOf(users.values());
-        }
-
-        @Get("/users/{id}")
-        public HttpResponse getUser(long id) {
-            User user = users.get(id);
-            if (user == null) {
-                return HttpResponse.notFound();
-            }
-            return HttpResponse.json(toJson(user));
-        }
-
-        @Post("/users")
-        public HttpResponse createUser(@RequestBody User user) {
-            long id = idGenerator.getAndIncrement();
-            User saved = new User(id, user.name(), user.email());
-            users.put(id, saved);
-            return new HttpResponse(201)
-                    .contentType("application/json; charset=UTF-8")
-                    .body(toJson(saved));
-        }
-
-        @Delete("/users/{id}")
-        public HttpResponse deleteUser(long id) {
-            User removed = users.remove(id);
-            if (removed == null) {
-                return HttpResponse.notFound();
-            }
-            return HttpResponse.ok("Deleted user " + id);
-        }
-
-        private String toJson(User user) {
-            return """
-                    {"id":%d,"name":"%s","email":"%s"}""".formatted(user.id(), user.name(), user.email());
-        }
-    }
-
-    public record User(long id, String name, String email) {
-        public User() {
-            this(0, "", "");
+    /**
+     * Inner class router — demonstrates that inner classes annotated with
+     * @FountainRouter are also discovered by the ASM bytecode scanner.
+     */
+    @FountainRouter
+    public static class HealthRoutes implements RouterConfigurer {
+        @Override
+        public void configure(Router router) {
+            router.get("/health", ctx ->
+                    HttpResponse.json("{\"healthy\":true}"));
         }
     }
 }
