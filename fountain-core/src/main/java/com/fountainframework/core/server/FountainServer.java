@@ -1,5 +1,6 @@
 package com.fountainframework.core.server;
 
+import com.fountainframework.core.router.Router;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelOption;
@@ -9,38 +10,57 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+
 /**
- * Netty-based HTTP server that listens on a given port and dispatches
- * requests through the Fountain routing pipeline.
+ * Netty-based HTTP server with virtual thread support.
+ * <p>
+ * Netty NIO event loops handle I/O (accept, read, write).
+ * Handler business logic is dispatched to virtual threads for non-blocking execution.
+ * Default concurrency limit: 1000 virtual threads.
  */
 public class FountainServer {
 
     private static final Logger log = LoggerFactory.getLogger(FountainServer.class);
+    private static final int DEFAULT_MAX_VIRTUAL_THREADS = 1000;
 
     private final int port;
-    private final RequestDispatcher dispatcher;
+    private final Router router;
+    private final int maxVirtualThreads;
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
+    private ExecutorService virtualThreadExecutor;
+    private Semaphore concurrencyLimiter;
     private Channel serverChannel;
 
-    public FountainServer(int port, RequestDispatcher dispatcher) {
+    public FountainServer(int port, Router router) {
+        this(port, router, DEFAULT_MAX_VIRTUAL_THREADS);
+    }
+
+    public FountainServer(int port, Router router, int maxVirtualThreads) {
         this.port = port;
-        this.dispatcher = dispatcher;
+        this.router = router;
+        this.maxVirtualThreads = maxVirtualThreads;
     }
 
     public void start() throws InterruptedException {
+        virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        concurrencyLimiter = new Semaphore(maxVirtualThreads);
+
         bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup();
 
         ServerBootstrap bootstrap = new ServerBootstrap();
         bootstrap.group(bossGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
-                .childHandler(new FountainChannelInitializer(dispatcher))
-                .option(ChannelOption.SO_BACKLOG, 128)
+                .childHandler(new FountainChannelInitializer(router, virtualThreadExecutor, concurrencyLimiter))
+                .option(ChannelOption.SO_BACKLOG, 1024)
                 .childOption(ChannelOption.SO_KEEPALIVE, true);
 
         serverChannel = bootstrap.bind(port).sync().channel();
-        log.info("Fountain server started on port {}", port);
+        log.info("Fountain server started on port {} (virtual threads: max {})", port, maxVirtualThreads);
     }
 
     public void awaitTermination() throws InterruptedException {
@@ -59,6 +79,9 @@ public class FountainServer {
         }
         if (bossGroup != null) {
             bossGroup.shutdownGracefully();
+        }
+        if (virtualThreadExecutor != null) {
+            virtualThreadExecutor.close();
         }
     }
 }
