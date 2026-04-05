@@ -23,7 +23,7 @@ import com.fountainframework.core.router.RouterConfigurer;
 public class ExampleApp {
 
     public static void main(String[] args) {
-        Fountain.run(ExampleApp.class).start();
+        Fountain.run(ExampleApp.class, args).start();
     }
 
     /**

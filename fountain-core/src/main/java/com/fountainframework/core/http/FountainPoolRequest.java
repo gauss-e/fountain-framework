@@ -14,7 +14,8 @@ public class FountainPoolRequest {
     private final HttpMethod method;
     private final String uri;
     private final String path;
-    private final Map<String, List<String>> queryParameters;
+    private final String rawQuery;
+    private volatile Map<String, List<String>> queryParameters;
     private final HttpVersion version;
     private final HttpHeaders headers;
     private final byte[] body;
@@ -28,15 +29,22 @@ public class FountainPoolRequest {
         this.body = builder.body;
         this.remoteAddress = builder.remoteAddress;
 
-        // Parse path and query parameters from URI
+        // Only split path from query — defer query parsing until first access
         int queryIndex = uri.indexOf('?');
         if (queryIndex >= 0) {
             this.path = uri.substring(0, queryIndex);
-            this.queryParameters = parseQueryString(uri.substring(queryIndex + 1));
+            this.rawQuery = uri.substring(queryIndex + 1);
         } else {
             this.path = uri;
-            this.queryParameters = Collections.emptyMap();
+            this.rawQuery = null;
         }
+    }
+
+    private Map<String, List<String>> queryParameters() {
+        if (queryParameters == null) {
+            queryParameters = (rawQuery != null) ? parseQueryString(rawQuery) : Collections.emptyMap();
+        }
+        return queryParameters;
     }
 
     public HttpMethod method() {
@@ -76,16 +84,16 @@ public class FountainPoolRequest {
     }
 
     public String queryParameter(String name) {
-        List<String> values = queryParameters.get(name);
+        List<String> values = queryParameters().get(name);
         return (values != null && !values.isEmpty()) ? values.getFirst() : null;
     }
 
     public List<String> queryParameters(String name) {
-        return queryParameters.getOrDefault(name, Collections.emptyList());
+        return queryParameters().getOrDefault(name, Collections.emptyList());
     }
 
     public Map<String, List<String>> allQueryParameters() {
-        return Collections.unmodifiableMap(queryParameters);
+        return Collections.unmodifiableMap(queryParameters());
     }
 
     public String header(String name) {

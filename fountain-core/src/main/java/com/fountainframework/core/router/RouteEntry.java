@@ -38,7 +38,7 @@ public final class RouteEntry {
             this.isParam = new boolean[0];
             this.paramNames = new String[0];
         } else {
-            String[] parts = path.split("/");
+            String[] parts = Router.splitPath(path);
             this.segments = new String[parts.length];
             this.isParam = new boolean[parts.length];
             this.paramNames = new String[parts.length];

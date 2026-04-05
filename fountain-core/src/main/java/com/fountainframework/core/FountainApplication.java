@@ -53,13 +53,6 @@ public class FountainApplication {
     }
 
     /**
-     * Create with default Jackson-based serialization and default config.
-     */
-    public static FountainApplication create() {
-        return create(FountainConfig.load());
-    }
-
-    /**
      * Create with custom serialization — open for extension.
      */
     public static FountainApplication create(FountainConfig config, BodyReader bodyReader, ResponseWriter responseWriter) {
@@ -151,8 +144,8 @@ public class FountainApplication {
      * Start the server on the given port (overrides config).
      */
     public void start(int port) {
-        int virtualThreadNum = config.getVirtualThreadNum();
-        server = new FountainServer(port, router, virtualThreadNum);
+        int maxConcurrency = config.getMaxConcurrency();
+        server = new FountainServer(port, router, maxConcurrency);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (server != null) {

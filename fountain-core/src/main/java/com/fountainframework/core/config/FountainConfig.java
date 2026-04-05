@@ -12,31 +12,20 @@ import java.util.Properties;
 /**
  * Configuration loader for Fountain applications.
  * <p>
- * Loads configuration from the classpath in priority order:
+ * Configuration is resolved in the following priority order (highest wins):
  * <ol>
- *   <li>{@code config.properties}</li>
- *   <li>{@code config.yaml} / {@code config.yml}</li>
- *   <li>{@code application.properties}</li>
- *   <li>{@code application.yaml} / {@code application.yml}</li>
+ *   <li><b>Command-line arguments</b> — {@code --key=value} format</li>
+ *   <li><b>Config file</b> from the classpath (first found wins, no merging):
+ *       {@code config.properties}, {@code config.yaml/yml},
+ *       {@code application.properties}, {@code application.yaml/yml}</li>
+ *   <li><b>Built-in defaults</b> defined in {@link ConfigKeys}</li>
  * </ol>
- * The first file found wins — no merging across files.
- * If no file is found, all values fall back to their defaults.
  *
- * <p>Supported keys:
- * <ul>
- *   <li>{@code fountain.server.port} — server listen port (default: 8080)</li>
- *   <li>{@code fountain.server.virtualthread.num} — virtual thread pool size (default: 1000)</li>
- * </ul>
+ * @see ConfigKeys for all supported keys and their defaults
  */
 public final class FountainConfig {
 
     private static final Logger log = LoggerFactory.getLogger(FountainConfig.class);
-
-    public static final int DEFAULT_PORT = 8080;
-    public static final int DEFAULT_VIRTUAL_THREAD_NUM = 1000;
-
-    private static final String KEY_PORT = "fountain.server.port";
-    private static final String KEY_VIRTUAL_THREAD_NUM = "fountain.server.virtualthread.num";
 
     private static final String[] CONFIG_FILES = {
             "config.properties",
@@ -54,16 +43,32 @@ public final class FountainConfig {
     }
 
     /**
-     * Load configuration from the classpath using the fallback chain.
+     * Load configuration from the classpath (no args override).
      */
     public static FountainConfig load() {
-        return load(Thread.currentThread().getContextClassLoader());
+        return load(new String[0]);
     }
 
     /**
-     * Load configuration from the classpath using the given class loader.
+     * Load configuration from the classpath, then overlay command-line args.
+     * <p>
+     * Args are parsed as {@code --key=value} pairs. For example:
+     * {@code --fountain.server.port=9090 --fountain.server.max-concurrency=2000}
      */
-    public static FountainConfig load(ClassLoader classLoader) {
+    public static FountainConfig load(String[] args) {
+        return load(Thread.currentThread().getContextClassLoader(), args);
+    }
+
+    /**
+     * Load configuration using the given class loader, then overlay command-line args.
+     */
+    public static FountainConfig load(ClassLoader classLoader, String[] args) {
+        Properties props = loadFromClasspath(classLoader);
+        applyArgs(props, args);
+        return new FountainConfig(props);
+    }
+
+    private static Properties loadFromClasspath(ClassLoader classLoader) {
         for (String file : CONFIG_FILES) {
             try (InputStream is = classLoader.getResourceAsStream(file)) {
                 if (is == null) {
@@ -76,13 +81,33 @@ public final class FountainConfig {
                     props = loadProperties(is);
                 }
                 log.info("Loaded configuration from: {}", file);
-                return new FountainConfig(props);
+                return props;
             } catch (IOException e) {
                 log.warn("Failed to read config file: {}", file, e);
             }
         }
         log.info("No configuration file found, using defaults");
-        return new FountainConfig(new Properties());
+        return new Properties();
+    }
+
+    /**
+     * Parse {@code --key=value} arguments and put them into the properties,
+     * overriding any values loaded from config files.
+     */
+    private static void applyArgs(Properties props, String[] args) {
+        if (args == null) {
+            return;
+        }
+        for (String arg : args) {
+            if (arg.startsWith("--") && arg.contains("=")) {
+                String kv = arg.substring(2);
+                int eq = kv.indexOf('=');
+                String key = kv.substring(0, eq);
+                String value = kv.substring(eq + 1);
+                props.setProperty(key, value);
+                log.debug("Arg override: {} = {}", key, value);
+            }
+        }
     }
 
     private static Properties loadProperties(InputStream is) throws IOException {
@@ -149,10 +174,10 @@ public final class FountainConfig {
     // ---- Convenience methods for known keys ----
 
     public int getPort() {
-        return getInt(KEY_PORT, DEFAULT_PORT);
+        return getInt(ConfigKeys.SERVER_PORT, ConfigKeys.SERVER_PORT_DEFAULT);
     }
 
-    public int getVirtualThreadNum() {
-        return getInt(KEY_VIRTUAL_THREAD_NUM, DEFAULT_VIRTUAL_THREAD_NUM);
+    public int getMaxConcurrency() {
+        return getInt(ConfigKeys.SERVER_MAX_CONCURRENCY, ConfigKeys.SERVER_MAX_CONCURRENCY_DEFAULT);
     }
 }

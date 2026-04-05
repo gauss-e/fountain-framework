@@ -21,7 +21,7 @@ import java.util.List;
  * <pre>{@code
  * public class MyApp {
  *     public static void main(String[] args) {
- *         Fountain.run(MyApp.class).start();   // port from config or default 8080
+ *         Fountain.run(MyApp.class, args).start();
  *     }
  * }
  * }</pre>
@@ -33,15 +33,26 @@ public final class Fountain {
     private Fountain() {}
 
     /**
+     * Scan and bootstrap with no command-line args (config file + defaults only).
+     */
+    public static FountainApplication run(Class<?> appClass) {
+        return run(appClass, new String[0]);
+    }
+
+    /**
      * Scan the package (and sub-packages) of {@code appClass} for
      * {@code @FountainRouter}-annotated {@link RouterConfigurer} classes
      * using ASM bytecode scanning, instantiate them, configure routes,
      * and return a ready-to-start application.
      * <p>
-     * Configuration is loaded automatically from the classpath.
+     * Configuration priority: command-line args ({@code --key=value}) >
+     * config file > built-in defaults.
+     *
+     * @param appClass base class whose package is scanned for routers
+     * @param args     command-line arguments (e.g. {@code --fountain.server.port=9090})
      */
-    public static FountainApplication run(Class<?> appClass) {
-        FountainConfig config = FountainConfig.load();
+    public static FountainApplication run(Class<?> appClass, String[] args) {
+        FountainConfig config = FountainConfig.load(args);
 
         String basePackage = appClass.getPackageName();
         log.info("Fountain starting — scanning package: {}", basePackage);

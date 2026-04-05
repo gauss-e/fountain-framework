@@ -19,25 +19,29 @@ import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Semaphore;
 
 /**
  * Netty channel handler that converts Netty HTTP objects to Fountain types
- * and dispatches handler execution to the virtual thread pool.
+ * and dispatches handler execution to virtual threads.
  * <p>
  * Netty I/O thread: parse request -> Virtual thread: run handler -> Netty I/O thread: write response
  * <p>
- * Concurrency is bounded by the fixed-size virtual thread pool — when all threads
- * are busy, new tasks queue until a thread becomes available.
+ * Concurrency is bounded by a {@link Semaphore}. When the limit is reached,
+ * new requests are immediately rejected with 503 Service Unavailable instead of
+ * queuing unboundedly, preventing memory pressure and tail-latency degradation.
  */
 public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     private static final Logger log = LoggerFactory.getLogger(FountainHttpHandler.class);
     private final Router router;
     private final ExecutorService virtualThreadPool;
+    private final Semaphore concurrencyLimiter;
 
-    public FountainHttpHandler(Router router, ExecutorService virtualThreadPool) {
+    public FountainHttpHandler(Router router, ExecutorService virtualThreadPool, Semaphore concurrencyLimiter) {
         this.router = router;
         this.virtualThreadPool = virtualThreadPool;
+        this.concurrencyLimiter = concurrencyLimiter;
     }
 
     @Override
@@ -47,21 +51,32 @@ public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpReq
 
         log.debug("{} {} from {}", request.method(), request.path(), request.remoteAddress());
 
-        virtualThreadPool.execute(() -> {
-            HttpResponse response;
-            try {
-                response = router.handle(request);
-                if (response == null) {
-                    response = HttpResponse.notFound();
-                }
-            } catch (Exception e) {
-                log.error("Error handling {} {}", request.method(), request.path(), e);
-                response = HttpResponse.error("Internal Server Error");
-            }
-
-            HttpResponse finalResponse = response;
+        if (!concurrencyLimiter.tryAcquire()) {
+            log.warn("Server overloaded, rejecting {} {}", request.method(), request.path());
             ctx.channel().eventLoop().execute(() ->
-                    writeResponse(ctx, keepAlive, finalResponse));
+                    writeResponse(ctx, keepAlive, HttpResponse.serviceUnavailable()));
+            return;
+        }
+
+        virtualThreadPool.execute(() -> {
+            try {
+                HttpResponse response;
+                try {
+                    response = router.handle(request);
+                    if (response == null) {
+                        response = HttpResponse.notFound();
+                    }
+                } catch (Exception e) {
+                    log.error("Error handling {} {}", request.method(), request.path(), e);
+                    response = HttpResponse.error("Internal Server Error");
+                }
+
+                HttpResponse finalResponse = response;
+                ctx.channel().eventLoop().execute(() ->
+                        writeResponse(ctx, keepAlive, finalResponse));
+            } finally {
+                concurrencyLimiter.release();
+            }
         });
     }
 

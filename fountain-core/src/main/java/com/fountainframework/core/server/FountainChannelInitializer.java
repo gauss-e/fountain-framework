@@ -8,6 +8,7 @@ import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
 
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Semaphore;
 
 /**
  * Configures the Netty channel pipeline for HTTP request handling.
@@ -18,10 +19,12 @@ public class FountainChannelInitializer extends ChannelInitializer<SocketChannel
 
     private final Router router;
     private final ExecutorService virtualThreadPool;
+    private final Semaphore concurrencyLimiter;
 
-    public FountainChannelInitializer(Router router, ExecutorService virtualThreadPool) {
+    public FountainChannelInitializer(Router router, ExecutorService virtualThreadPool, Semaphore concurrencyLimiter) {
         this.router = router;
         this.virtualThreadPool = virtualThreadPool;
+        this.concurrencyLimiter = concurrencyLimiter;
     }
 
     @Override
@@ -29,6 +32,6 @@ public class FountainChannelInitializer extends ChannelInitializer<SocketChannel
         ChannelPipeline pipeline = ch.pipeline();
         pipeline.addLast("httpCodec", new HttpServerCodec());
         pipeline.addLast("httpAggregator", new HttpObjectAggregator(MAX_CONTENT_LENGTH));
-        pipeline.addLast("handler", new FountainHttpHandler(router, virtualThreadPool));
+        pipeline.addLast("handler", new FountainHttpHandler(router, virtualThreadPool, concurrencyLimiter));
     }
 }
