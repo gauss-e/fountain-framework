@@ -1,23 +1,25 @@
 package com.fountainframework.core.router;
 
-import com.fountainframework.core.handler.FountainHandler;
+import com.fountainframework.core.handler.RouteHandler;
 import com.fountainframework.core.http.HttpMethod;
 
 /**
- * A compiled route: HTTP method + path segments + handler function.
- * No reflection involved — the handler is a direct function reference.
+ * A compiled route: HTTP method + path segments + unified handler.
+ * <p>
+ * The handler is always a pre-adapted {@link RouteHandler} — serialization
+ * and deserialization are baked in at registration time, not resolved per request.
  */
 public final class RouteEntry {
 
     private final HttpMethod method;
     private final String pattern;
-    private final String[] segments;       // split path segments
-    private final boolean[] isParam;       // true if segment is a :param
-    private final String[] paramNames;     // param name for each segment (null if static)
-    private final boolean hasWildcard;     // ends with *
-    private final FountainHandler handler;
+    private final String[] segments;
+    private final boolean[] isParam;
+    private final String[] paramNames;
+    private final boolean hasWildcard;
+    private final RouteHandler handler;
 
-    public RouteEntry(HttpMethod method, String pattern, FountainHandler handler) {
+    public RouteEntry(HttpMethod method, String pattern, RouteHandler handler) {
         this.method = method;
         this.pattern = pattern;
         this.handler = handler;
@@ -78,7 +80,7 @@ public final class RouteEntry {
         return hasWildcard;
     }
 
-    public FountainHandler handler() {
+    public RouteHandler handler() {
         return handler;
     }
 

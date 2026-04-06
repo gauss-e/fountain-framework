@@ -1,7 +1,13 @@
 package com.fountainframework.core;
 
+import com.fountainframework.core.handler.ContextHandler;
 import com.fountainframework.core.handler.FountainHandler;
+import com.fountainframework.core.handler.HandlerAdapter;
 import com.fountainframework.core.router.Router;
+import com.fountainframework.core.serialize.BodyReader;
+import com.fountainframework.core.serialize.JacksonBodyReader;
+import com.fountainframework.core.serialize.JacksonResponseWriter;
+import com.fountainframework.core.serialize.ResponseWriter;
 import com.fountainframework.core.server.FountainServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,17 +21,12 @@ import java.util.function.Consumer;
  * <pre>{@code
  * FountainApplication app = FountainApplication.create();
  *
+ * // Context-only handler
  * app.get("/hello", ctx -> HttpResponse.ok("Hello!"));
  *
- * app.get("/users/:id", ctx -> {
- *     long id = ctx.pathParamAsLong("id");
- *     return HttpResponse.json("{\"id\":" + id + "}");
- * });
- *
- * app.post("/users", ctx -> {
- *     User user = ctx.bodyAs(User.class);
- *     return HttpResponse.json(mapper.writeValueAsString(user));
- * });
+ * // Typed handler — auto-deserialize body, auto-serialize response
+ * app.post("/users", User.class, (user, ctx) ->
+ *         new UserResponse(user.id(), user.name()));
  *
  * app.start(8080);
  * }</pre>
@@ -34,75 +35,96 @@ public class FountainApplication {
 
     private static final Logger log = LoggerFactory.getLogger(FountainApplication.class);
 
-    private final Router router = new Router();
+    private final Router router;
     private FountainServer server;
 
-    private FountainApplication() {}
-
-    public static FountainApplication create() {
-        return new FountainApplication();
+    private FountainApplication(Router router) {
+        this.router = router;
     }
 
-    // ---- Delegate route methods to Router ----
+    /**
+     * Create with default Jackson-based serialization.
+     */
+    public static FountainApplication create() {
+        return create(new JacksonBodyReader(), new JacksonResponseWriter());
+    }
 
-    public FountainApplication get(String path, FountainHandler handler) {
+    /**
+     * Create with custom serialization — open for extension.
+     */
+    public static FountainApplication create(BodyReader bodyReader, ResponseWriter responseWriter) {
+        HandlerAdapter adapter = new HandlerAdapter(bodyReader, responseWriter);
+        Router router = new Router(adapter);
+        return new FountainApplication(router);
+    }
+
+    // ---- Context-only handler delegates ----
+
+    public <O> FountainApplication get(String path, ContextHandler<O> handler) {
         router.get(path, handler);
         return this;
     }
 
-    public FountainApplication post(String path, FountainHandler handler) {
+    public <O> FountainApplication post(String path, ContextHandler<O> handler) {
         router.post(path, handler);
         return this;
     }
 
-    public FountainApplication put(String path, FountainHandler handler) {
+    public <O> FountainApplication put(String path, ContextHandler<O> handler) {
         router.put(path, handler);
         return this;
     }
 
-    public FountainApplication delete(String path, FountainHandler handler) {
+    public <O> FountainApplication delete(String path, ContextHandler<O> handler) {
         router.delete(path, handler);
         return this;
     }
 
-    public FountainApplication patch(String path, FountainHandler handler) {
+    public <O> FountainApplication patch(String path, ContextHandler<O> handler) {
         router.patch(path, handler);
         return this;
     }
 
-    public FountainApplication head(String path, FountainHandler handler) {
-        router.head(path, handler);
+    // ---- Typed body handler delegates ----
+
+    public <R, O> FountainApplication get(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+        router.get(path, bodyType, handler);
         return this;
     }
 
-    public FountainApplication options(String path, FountainHandler handler) {
-        router.options(path, handler);
+    public <R, O> FountainApplication post(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+        router.post(path, bodyType, handler);
         return this;
     }
 
-    public FountainApplication any(String path, FountainHandler handler) {
-        router.any(path, handler);
+    public <R, O> FountainApplication put(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+        router.put(path, bodyType, handler);
         return this;
     }
 
-    /**
-     * Create a route group with a common prefix.
-     */
+    public <R, O> FountainApplication delete(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+        router.delete(path, bodyType, handler);
+        return this;
+    }
+
+    public <R, O> FountainApplication patch(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+        router.patch(path, bodyType, handler);
+        return this;
+    }
+
+    // ---- Groups ----
+
     public FountainApplication group(String prefix, Consumer<Router> configure) {
         router.group(prefix, configure);
         return this;
     }
 
-    /**
-     * Access the underlying router for advanced configuration.
-     */
     public Router router() {
         return router;
     }
 
-    /**
-     * Start the HTTP server on the given port. Blocks until shutdown.
-     */
+    // ---- Server lifecycle ----
+
     public void start(int port) {
         server = new FountainServer(port, router);
 

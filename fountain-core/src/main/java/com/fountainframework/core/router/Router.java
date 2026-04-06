@@ -1,7 +1,6 @@
 package com.fountainframework.core.router;
 
-import com.fountainframework.core.handler.FountainContext;
-import com.fountainframework.core.handler.FountainHandler;
+import com.fountainframework.core.handler.*;
 import com.fountainframework.core.http.FountainPoolRequest;
 import com.fountainframework.core.http.HttpMethod;
 import com.fountainframework.core.http.HttpResponse;
@@ -12,97 +11,94 @@ import java.util.*;
 import java.util.function.Consumer;
 
 /**
- * High-performance HTTP router with Gin-style path parameters.
+ * High-performance HTTP router with Gin-style path parameters and generic typed handlers.
  * <p>
- * Zero reflection — routes map directly to lambda/method-reference handlers.
- * Path matching uses pre-compiled segment arrays for O(segments) matching.
- * <p>
- * Supports:
+ * Two handler styles:
  * <ul>
- *   <li>Static paths: {@code /users}</li>
- *   <li>Named parameters: {@code /users/:id}</li>
- *   <li>Wildcard: {@code /static/*}</li>
- *   <li>Route groups: {@code router.group("/api/v1", g -> { ... })}</li>
+ *   <li>{@link ContextHandler} — context-only: {@code router.get("/hello", ctx -> ...)}</li>
+ *   <li>{@link FountainHandler} — typed body: {@code router.post("/users", User.class, (user, ctx) -> ...)}</li>
  * </ul>
- *
- * <pre>{@code
- * Router router = new Router();
- * router.get("/hello", ctx -> HttpResponse.ok("Hello!"));
- * router.get("/users/:id", ctx -> {
- *     String id = ctx.pathParam("id");
- *     return HttpResponse.ok("User: " + id);
- * });
- * }</pre>
+ * <p>
+ * Both styles support any return type {@code O} — the {@link com.fountainframework.core.serialize.ResponseWriter}
+ * auto-converts POJOs to JSON, Strings to text/plain, and passes {@link HttpResponse} through unchanged.
+ * <p>
+ * Handlers are adapted into a unified {@link RouteHandler} at registration time via {@link HandlerAdapter},
+ * so the dispatch path has zero per-request overhead from type resolution.
  */
 public class Router {
 
     private static final Logger log = LoggerFactory.getLogger(Router.class);
 
-    // Routes indexed by HTTP method for fast lookup
     private final Map<HttpMethod, List<RouteEntry>> routeTable = new EnumMap<>(HttpMethod.class);
+    private final HandlerAdapter adapter;
     private final String prefix;
 
-    public Router() {
-        this("");
+    public Router(HandlerAdapter adapter) {
+        this(adapter, "");
     }
 
-    private Router(String prefix) {
+    private Router(HandlerAdapter adapter, String prefix) {
+        this.adapter = adapter;
         this.prefix = prefix;
     }
 
-    // ---- Route registration ----
+    // ---- Context-only handlers (no body deserialization) ----
 
-    public Router get(String path, FountainHandler handler) {
-        return addRoute(HttpMethod.GET, path, handler);
+    public <O> Router get(String path, ContextHandler<O> handler) {
+        return addRoute(HttpMethod.GET, path, adapter.adapt(handler));
     }
 
-    public Router post(String path, FountainHandler handler) {
-        return addRoute(HttpMethod.POST, path, handler);
+    public <O> Router post(String path, ContextHandler<O> handler) {
+        return addRoute(HttpMethod.POST, path, adapter.adapt(handler));
     }
 
-    public Router put(String path, FountainHandler handler) {
-        return addRoute(HttpMethod.PUT, path, handler);
+    public <O> Router put(String path, ContextHandler<O> handler) {
+        return addRoute(HttpMethod.PUT, path, adapter.adapt(handler));
     }
 
-    public Router delete(String path, FountainHandler handler) {
-        return addRoute(HttpMethod.DELETE, path, handler);
+    public <O> Router delete(String path, ContextHandler<O> handler) {
+        return addRoute(HttpMethod.DELETE, path, adapter.adapt(handler));
     }
 
-    public Router patch(String path, FountainHandler handler) {
-        return addRoute(HttpMethod.PATCH, path, handler);
+    public <O> Router patch(String path, ContextHandler<O> handler) {
+        return addRoute(HttpMethod.PATCH, path, adapter.adapt(handler));
     }
 
-    public Router head(String path, FountainHandler handler) {
-        return addRoute(HttpMethod.HEAD, path, handler);
+    public <O> Router head(String path, ContextHandler<O> handler) {
+        return addRoute(HttpMethod.HEAD, path, adapter.adapt(handler));
     }
 
-    public Router options(String path, FountainHandler handler) {
-        return addRoute(HttpMethod.OPTIONS, path, handler);
+    public <O> Router options(String path, ContextHandler<O> handler) {
+        return addRoute(HttpMethod.OPTIONS, path, adapter.adapt(handler));
     }
 
-    /**
-     * Register a handler for all HTTP methods.
-     */
-    public Router any(String path, FountainHandler handler) {
-        for (HttpMethod m : HttpMethod.values()) {
-            addRoute(m, path, handler);
-        }
-        return this;
+    // ---- Typed body handlers (auto-deserialization of R) ----
+
+    public <R, O> Router get(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+        return addRoute(HttpMethod.GET, path, adapter.adapt(bodyType, handler));
     }
 
-    /**
-     * Create a route group with a common prefix.
-     * <pre>{@code
-     * router.group("/api/v1", api -> {
-     *     api.get("/users", ctx -> ...);    // matches /api/v1/users
-     *     api.post("/users", ctx -> ...);   // matches /api/v1/users
-     * });
-     * }</pre>
-     */
+    public <R, O> Router post(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+        return addRoute(HttpMethod.POST, path, adapter.adapt(bodyType, handler));
+    }
+
+    public <R, O> Router put(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+        return addRoute(HttpMethod.PUT, path, adapter.adapt(bodyType, handler));
+    }
+
+    public <R, O> Router delete(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+        return addRoute(HttpMethod.DELETE, path, adapter.adapt(bodyType, handler));
+    }
+
+    public <R, O> Router patch(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+        return addRoute(HttpMethod.PATCH, path, adapter.adapt(bodyType, handler));
+    }
+
+    // ---- Route groups ----
+
     public Router group(String groupPrefix, Consumer<Router> configure) {
-        Router sub = new Router(this.prefix + normalizePath(groupPrefix));
+        Router sub = new Router(adapter, this.prefix + normalizePath(groupPrefix));
         configure.accept(sub);
-        // Merge sub-router routes into this router
         for (var entry : sub.routeTable.entrySet()) {
             routeTable.computeIfAbsent(entry.getKey(), _ -> new ArrayList<>())
                     .addAll(entry.getValue());
@@ -110,15 +106,15 @@ public class Router {
         return this;
     }
 
-    private Router addRoute(HttpMethod method, String path, FountainHandler handler) {
+    // ---- Internal ----
+
+    private Router addRoute(HttpMethod method, String path, RouteHandler handler) {
         String fullPath = prefix + normalizePath(path);
         RouteEntry entry = new RouteEntry(method, fullPath, handler);
         routeTable.computeIfAbsent(method, _ -> new ArrayList<>()).add(entry);
         log.info("Registered route: {} {}", method, fullPath);
         return this;
     }
-
-    // ---- Route matching ----
 
     /**
      * Match a request and dispatch to the handler. Returns null if no route matches.
@@ -142,16 +138,11 @@ public class Router {
         return null;
     }
 
-    /**
-     * Try to match request segments against a route.
-     * Returns path parameters map on match, null on mismatch.
-     */
     private Map<String, String> tryMatch(RouteEntry route, String[] requestSegments) {
         String[] routeSegments = route.segments();
         boolean[] isParam = route.isParam();
         String[] paramNames = route.paramNames();
 
-        // Wildcard route: request must have at least as many segments as route
         if (route.hasWildcard()) {
             if (requestSegments.length < routeSegments.length) {
                 return null;
@@ -178,8 +169,6 @@ public class Router {
 
         return params != null ? params : Collections.emptyMap();
     }
-
-    // ---- Utilities ----
 
     private static String[] splitPath(String path) {
         if (path == null || path.isEmpty() || path.equals("/")) {

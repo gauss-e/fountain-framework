@@ -3,7 +3,6 @@ package com.fountainframework.core.handler;
 import com.fountainframework.core.http.FountainPoolRequest;
 import com.fountainframework.core.http.HttpHeaders;
 import com.fountainframework.core.http.HttpMethod;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Collections;
 import java.util.List;
@@ -11,12 +10,12 @@ import java.util.Map;
 
 /**
  * Request context passed to every handler.
- * Provides access to path parameters, query parameters, headers, body,
- * and JSON deserialization — all without reflection.
+ * Provides access to path parameters, query parameters, headers, and raw body.
+ * <p>
+ * Body deserialization is handled externally by {@link com.fountainframework.core.serialize.BodyReader}
+ * via the {@link HandlerAdapter} — this class is intentionally free of serialization concerns (SRP).
  */
 public final class FountainContext {
-
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final FountainPoolRequest request;
     private final Map<String, String> pathParams;
@@ -69,7 +68,7 @@ public final class FountainContext {
         return request.contentType();
     }
 
-    // ---- Body ----
+    // ---- Body (raw access) ----
 
     public byte[] body() {
         return request.body();
@@ -77,15 +76,6 @@ public final class FountainContext {
 
     public String bodyAsString() {
         return request.bodyAsString();
-    }
-
-    /**
-     * Deserialize the JSON request body into the given type.
-     * Uses Jackson ObjectMapper — zero reflection at dispatch time,
-     * Jackson internally uses optimized bytecode generation.
-     */
-    public <T> T bodyAs(Class<T> type) throws Exception {
-        return OBJECT_MAPPER.readValue(request.body(), type);
     }
 
     // ---- Request metadata ----
@@ -110,9 +100,6 @@ public final class FountainContext {
         return request.isKeepAlive();
     }
 
-    /**
-     * Access the underlying raw request object.
-     */
     public FountainPoolRequest request() {
         return request;
     }
