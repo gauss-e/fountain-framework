@@ -19,64 +19,49 @@ import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Semaphore;
 
 /**
  * Netty channel handler that converts Netty HTTP objects to Fountain types
- * and dispatches handler execution to virtual threads.
+ * and dispatches handler execution to the virtual thread pool.
  * <p>
  * Netty I/O thread: parse request -> Virtual thread: run handler -> Netty I/O thread: write response
+ * <p>
+ * Concurrency is bounded by the fixed-size virtual thread pool — when all threads
+ * are busy, new tasks queue until a thread becomes available.
  */
 public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     private static final Logger log = LoggerFactory.getLogger(FountainHttpHandler.class);
     private final Router router;
-    private final ExecutorService virtualThreadExecutor;
-    private final Semaphore concurrencyLimiter;
+    private final ExecutorService virtualThreadPool;
 
-    public FountainHttpHandler(Router router, ExecutorService virtualThreadExecutor,
-                                Semaphore concurrencyLimiter) {
+    public FountainHttpHandler(Router router, ExecutorService virtualThreadPool) {
         this.router = router;
-        this.virtualThreadExecutor = virtualThreadExecutor;
-        this.concurrencyLimiter = concurrencyLimiter;
+        this.virtualThreadPool = virtualThreadPool;
     }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest nettyRequest) {
-        // Retain the request so it survives beyond the Netty event loop call
         FountainPoolRequest request = convertRequest(ctx, nettyRequest);
         boolean keepAlive = request.isKeepAlive();
 
         log.debug("{} {} from {}", request.method(), request.path(), request.remoteAddress());
 
-        // Dispatch handler execution to a virtual thread
-        virtualThreadExecutor.execute(() -> {
+        virtualThreadPool.execute(() -> {
+            HttpResponse response;
             try {
-                concurrencyLimiter.acquire();
-                try {
-                    HttpResponse response;
-                    try {
-                        response = router.handle(request);
-                        if (response == null) {
-                            response = HttpResponse.notFound();
-                        }
-                    } catch (Exception e) {
-                        log.error("Error handling {} {}", request.method(), request.path(), e);
-                        response = HttpResponse.error("Internal Server Error");
-                    }
-
-                    // Write response back on the Netty event loop thread
-                    HttpResponse finalResponse = response;
-                    ctx.channel().eventLoop().execute(() ->
-                            writeResponse(ctx, keepAlive, finalResponse));
-                } finally {
-                    concurrencyLimiter.release();
+                response = router.handle(request);
+                if (response == null) {
+                    response = HttpResponse.notFound();
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                ctx.channel().eventLoop().execute(() ->
-                        writeResponse(ctx, keepAlive, HttpResponse.error("Service Unavailable")));
+            } catch (Exception e) {
+                log.error("Error handling {} {}", request.method(), request.path(), e);
+                response = HttpResponse.error("Internal Server Error");
             }
+
+            HttpResponse finalResponse = response;
+            ctx.channel().eventLoop().execute(() ->
+                    writeResponse(ctx, keepAlive, finalResponse));
         });
     }
 

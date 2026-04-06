@@ -1,5 +1,6 @@
 package com.fountainframework.core;
 
+import com.fountainframework.core.config.FountainConfig;
 import com.fountainframework.core.router.Router;
 import com.fountainframework.core.router.RouterConfigurer;
 import com.fountainframework.core.scanner.ClassScanner;
@@ -11,21 +12,16 @@ import java.util.List;
 /**
  * Bootstrap entry point for Fountain applications.
  * <p>
- * Scans the package of the given class for {@link com.fountainframework.core.router.FountainRouter}
- * annotated {@link RouterConfigurer} implementations using ASM bytecode visiting
- * (no reflection-based class loading during scan), assembles routes, and returns
- * a configured {@link FountainApplication} ready to start.
- * <p>
- * Supports:
- * <ul>
- *   <li>Inner classes annotated with {@code @FountainRouter}</li>
- *   <li>Meta-annotations — user-defined annotations that carry {@code @FountainRouter}</li>
- * </ul>
+ * Loads configuration from the classpath ({@code config.properties}, {@code config.yaml},
+ * or {@code application.properties}, {@code application.yaml}), scans the package of the
+ * given class for {@link com.fountainframework.core.router.FountainRouter} annotated
+ * {@link RouterConfigurer} implementations using ASM bytecode visiting, assembles routes,
+ * and returns a configured {@link FountainApplication} ready to start.
  *
  * <pre>{@code
  * public class MyApp {
  *     public static void main(String[] args) {
- *         Fountain.run(MyApp.class).start(8080);
+ *         Fountain.run(MyApp.class).start();   // port from config or default 8080
  *     }
  * }
  * }</pre>
@@ -41,15 +37,19 @@ public final class Fountain {
      * {@code @FountainRouter}-annotated {@link RouterConfigurer} classes
      * using ASM bytecode scanning, instantiate them, configure routes,
      * and return a ready-to-start application.
+     * <p>
+     * Configuration is loaded automatically from the classpath.
      */
     public static FountainApplication run(Class<?> appClass) {
+        FountainConfig config = FountainConfig.load();
+
         String basePackage = appClass.getPackageName();
         log.info("Fountain starting — scanning package: {}", basePackage);
 
         ClassScanner scanner = new ClassScanner();
         List<String> classNames = scanner.scan(basePackage);
 
-        FountainApplication app = FountainApplication.create();
+        FountainApplication app = FountainApplication.create(config);
         Router router = app.router();
 
         int configurerCount = 0;

@@ -1,5 +1,6 @@
 package com.fountainframework.core;
 
+import com.fountainframework.core.config.FountainConfig;
 import com.fountainframework.core.handler.ContextHandler;
 import com.fountainframework.core.handler.FountainHandler;
 import com.fountainframework.core.handler.HandlerAdapter;
@@ -28,7 +29,7 @@ import java.util.function.Consumer;
  * app.post("/users", User.class, (user, ctx) ->
  *         new UserResponse(user.id(), user.name()));
  *
- * app.start(8080);
+ * app.start();  // port from config or default 8080
  * }</pre>
  */
 public class FountainApplication {
@@ -36,26 +37,35 @@ public class FountainApplication {
     private static final Logger log = LoggerFactory.getLogger(FountainApplication.class);
 
     private final Router router;
+    private final FountainConfig config;
     private FountainServer server;
 
-    private FountainApplication(Router router) {
+    private FountainApplication(Router router, FountainConfig config) {
         this.router = router;
+        this.config = config;
     }
 
     /**
-     * Create with default Jackson-based serialization.
+     * Create with default Jackson-based serialization and the given config.
+     */
+    public static FountainApplication create(FountainConfig config) {
+        return create(config, new JacksonBodyReader(), new JacksonResponseWriter());
+    }
+
+    /**
+     * Create with default Jackson-based serialization and default config.
      */
     public static FountainApplication create() {
-        return create(new JacksonBodyReader(), new JacksonResponseWriter());
+        return create(FountainConfig.load());
     }
 
     /**
      * Create with custom serialization — open for extension.
      */
-    public static FountainApplication create(BodyReader bodyReader, ResponseWriter responseWriter) {
+    public static FountainApplication create(FountainConfig config, BodyReader bodyReader, ResponseWriter responseWriter) {
         HandlerAdapter adapter = new HandlerAdapter(bodyReader, responseWriter);
         Router router = new Router(adapter);
-        return new FountainApplication(router);
+        return new FountainApplication(router, config);
     }
 
     // ---- Context-only handler delegates ----
@@ -123,10 +133,26 @@ public class FountainApplication {
         return router;
     }
 
+    public FountainConfig config() {
+        return config;
+    }
+
     // ---- Server lifecycle ----
 
+    /**
+     * Start the server using port and virtual thread pool size from configuration.
+     * Defaults: port=8080, virtualthread.num=1000.
+     */
+    public void start() {
+        start(config.getPort());
+    }
+
+    /**
+     * Start the server on the given port (overrides config).
+     */
     public void start(int port) {
-        server = new FountainServer(port, router);
+        int virtualThreadNum = config.getVirtualThreadNum();
+        server = new FountainServer(port, router, virtualThreadNum);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (server != null) {

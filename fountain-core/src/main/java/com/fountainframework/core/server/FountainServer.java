@@ -12,41 +12,40 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Semaphore;
 
 /**
- * Netty-based HTTP server with virtual thread support.
+ * Netty-based HTTP server with a fixed virtual thread pool.
  * <p>
  * Netty NIO event loops handle I/O (accept, read, write).
- * Handler business logic is dispatched to virtual threads for non-blocking execution.
- * Default concurrency limit: 1000 virtual threads.
+ * Handler business logic is dispatched to a pre-created pool of virtual threads.
+ * Default pool size: 1000 virtual threads, configurable via {@code fountain.server.virtualthread.num}.
  */
 public class FountainServer {
 
     private static final Logger log = LoggerFactory.getLogger(FountainServer.class);
-    private static final int DEFAULT_MAX_VIRTUAL_THREADS = 1000;
+    private static final int DEFAULT_VIRTUAL_THREAD_NUM = 1000;
 
     private final int port;
     private final Router router;
-    private final int maxVirtualThreads;
+    private final int virtualThreadNum;
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
-    private ExecutorService virtualThreadExecutor;
+    private ExecutorService virtualThreadPool;
     private Channel serverChannel;
 
     public FountainServer(int port, Router router) {
-        this(port, router, DEFAULT_MAX_VIRTUAL_THREADS);
+        this(port, router, DEFAULT_VIRTUAL_THREAD_NUM);
     }
 
-    public FountainServer(int port, Router router, int maxVirtualThreads) {
+    public FountainServer(int port, Router router, int virtualThreadNum) {
         this.port = port;
         this.router = router;
-        this.maxVirtualThreads = maxVirtualThreads;
+        this.virtualThreadNum = virtualThreadNum;
     }
 
     public void start() throws InterruptedException {
-        virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
-        Semaphore concurrencyLimiter = new Semaphore(maxVirtualThreads);
+        virtualThreadPool = Executors.newFixedThreadPool(virtualThreadNum,
+                Thread.ofVirtual().name("fountain-vt-", 0).factory());
 
         bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup();
@@ -54,13 +53,12 @@ public class FountainServer {
         ServerBootstrap bootstrap = new ServerBootstrap();
         bootstrap.group(bossGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
-                .childHandler(new FountainChannelInitializer(router, virtualThreadExecutor,
-                    concurrencyLimiter))
+                .childHandler(new FountainChannelInitializer(router, virtualThreadPool))
                 .option(ChannelOption.SO_BACKLOG, 1024)
                 .childOption(ChannelOption.SO_KEEPALIVE, true);
 
         serverChannel = bootstrap.bind(port).sync().channel();
-        log.info("Fountain server started on port {} (virtual threads: max {})", port, maxVirtualThreads);
+        log.info("Fountain server started on port {} (virtual thread pool: {})", port, virtualThreadNum);
     }
 
     public void awaitTermination() throws InterruptedException {
@@ -80,8 +78,8 @@ public class FountainServer {
         if (bossGroup != null) {
             bossGroup.shutdownGracefully();
         }
-        if (virtualThreadExecutor != null) {
-            virtualThreadExecutor.close();
+        if (virtualThreadPool != null) {
+            virtualThreadPool.close();
         }
     }
 }

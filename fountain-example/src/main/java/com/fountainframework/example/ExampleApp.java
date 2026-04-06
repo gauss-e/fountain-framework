@@ -12,6 +12,9 @@ import com.fountainframework.core.router.RouterConfigurer;
  * {@code Fountain.run(ExampleApp.class)} scans this package for
  * {@code @FountainRouter} classes (including inner classes and meta-annotations)
  * and auto-registers their routes.
+ * <p>
+ * Port and virtual thread pool size are configured via {@code config.properties}
+ * or {@code application.properties} in the classpath. Defaults: port=8080, virtualthread.num=1000.
  *
  * @see UserRoutes        — direct @FountainRouter
  * @see StatusRoutes      — via custom meta-annotation @ApiRouter
@@ -20,8 +23,7 @@ import com.fountainframework.core.router.RouterConfigurer;
 public class ExampleApp {
 
     public static void main(String[] args) {
-        int port = args.length > 0 ? Integer.parseInt(args[0]) : 8080;
-        Fountain.run(ExampleApp.class).start(port);
+        Fountain.run(ExampleApp.class).start();
     }
 
     /**
