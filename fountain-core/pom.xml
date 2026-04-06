@@ -40,6 +40,12 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
+        <!-- ASM (bytecode scanning) -->
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm</artifactId>
+        </dependency>
+
         <!-- Logging -->
         <dependency>
             <groupId>ch.qos.logback</groupId>
