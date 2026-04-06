@@ -23,11 +23,13 @@ public final class HandlerAdapter {
     /**
      * Adapt a context-only handler.
      * <p>
+     * {@code ? extends O} — handler may return any subtype of O (covariant output).
+     * <p>
      * Pipeline: ctx → handler.handle(ctx) → responseWriter.write(result)
      */
-    public <O> RouteHandler adapt(ContextHandler<O> handler) {
+    public RouteHandler adapt(ContextHandler<?> handler) {
         return ctx -> {
-            O result = handler.handle(ctx);
+            Object result = handler.handle(ctx);
             return responseWriter.write(result);
         };
     }
@@ -35,14 +37,21 @@ public final class HandlerAdapter {
     /**
      * Adapt a generic typed handler with auto body deserialization.
      * <p>
-     * Pipeline: ctx.body() → bodyReader.read(bodyType) → handler.handle(body, ctx) → responseWriter.write(result)
+     * Follows PECS (Producer Extends, Consumer Super):
+     * <ul>
+     *   <li>{@code ? super R} — handler can accept R or any supertype (contravariant input).
+     *       e.g. {@code FountainHandler<BaseRequest, ?>} works when registered with {@code UserRequest.class}
+     *       where {@code UserRequest extends BaseRequest}.</li>
+     *   <li>{@code ?} — handler may return any type (covariant output).
+     *       e.g. handler returning {@code AdminResponse} works when declared as producing {@code BaseResponse}.</li>
+     * </ul>
      *
      * @param bodyType the Class token for R — captured at registration time, used for deserialization
      */
-    public <R, O> RouteHandler adapt(Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> RouteHandler adapt(Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         return ctx -> {
             R body = bodyReader.read(ctx.body(), bodyType);
-            O result = handler.handle(body, ctx);
+            Object result = handler.handle(body, ctx);
             return responseWriter.write(result);
         };
     }

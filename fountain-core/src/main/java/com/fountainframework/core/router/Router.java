@@ -42,55 +42,55 @@ public class Router {
         this.prefix = prefix;
     }
 
-    // ---- Context-only handlers (no body deserialization) ----
+    // ---- Context-only handlers (covariant output: handler can return any type) ----
 
-    public <O> Router get(String path, ContextHandler<O> handler) {
+    public Router get(String path, ContextHandler<?> handler) {
         return addRoute(HttpMethod.GET, path, adapter.adapt(handler));
     }
 
-    public <O> Router post(String path, ContextHandler<O> handler) {
+    public Router post(String path, ContextHandler<?> handler) {
         return addRoute(HttpMethod.POST, path, adapter.adapt(handler));
     }
 
-    public <O> Router put(String path, ContextHandler<O> handler) {
+    public Router put(String path, ContextHandler<?> handler) {
         return addRoute(HttpMethod.PUT, path, adapter.adapt(handler));
     }
 
-    public <O> Router delete(String path, ContextHandler<O> handler) {
+    public Router delete(String path, ContextHandler<?> handler) {
         return addRoute(HttpMethod.DELETE, path, adapter.adapt(handler));
     }
 
-    public <O> Router patch(String path, ContextHandler<O> handler) {
+    public Router patch(String path, ContextHandler<?> handler) {
         return addRoute(HttpMethod.PATCH, path, adapter.adapt(handler));
     }
 
-    public <O> Router head(String path, ContextHandler<O> handler) {
+    public Router head(String path, ContextHandler<?> handler) {
         return addRoute(HttpMethod.HEAD, path, adapter.adapt(handler));
     }
 
-    public <O> Router options(String path, ContextHandler<O> handler) {
+    public Router options(String path, ContextHandler<?> handler) {
         return addRoute(HttpMethod.OPTIONS, path, adapter.adapt(handler));
     }
 
-    // ---- Typed body handlers (auto-deserialization of R) ----
+    // ---- Typed body handlers (PECS: ? super R for input, ? for output) ----
 
-    public <R, O> Router get(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> Router get(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         return addRoute(HttpMethod.GET, path, adapter.adapt(bodyType, handler));
     }
 
-    public <R, O> Router post(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> Router post(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         return addRoute(HttpMethod.POST, path, adapter.adapt(bodyType, handler));
     }
 
-    public <R, O> Router put(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> Router put(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         return addRoute(HttpMethod.PUT, path, adapter.adapt(bodyType, handler));
     }
 
-    public <R, O> Router delete(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> Router delete(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         return addRoute(HttpMethod.DELETE, path, adapter.adapt(bodyType, handler));
     }
 
-    public <R, O> Router patch(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> Router patch(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         return addRoute(HttpMethod.PATCH, path, adapter.adapt(bodyType, handler));
     }
 

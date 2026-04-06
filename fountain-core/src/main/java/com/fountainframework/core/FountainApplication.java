@@ -60,54 +60,54 @@ public class FountainApplication {
 
     // ---- Context-only handler delegates ----
 
-    public <O> FountainApplication get(String path, ContextHandler<O> handler) {
+    public FountainApplication get(String path, ContextHandler<?> handler) {
         router.get(path, handler);
         return this;
     }
 
-    public <O> FountainApplication post(String path, ContextHandler<O> handler) {
+    public FountainApplication post(String path, ContextHandler<?> handler) {
         router.post(path, handler);
         return this;
     }
 
-    public <O> FountainApplication put(String path, ContextHandler<O> handler) {
+    public FountainApplication put(String path, ContextHandler<?> handler) {
         router.put(path, handler);
         return this;
     }
 
-    public <O> FountainApplication delete(String path, ContextHandler<O> handler) {
+    public FountainApplication delete(String path, ContextHandler<?> handler) {
         router.delete(path, handler);
         return this;
     }
 
-    public <O> FountainApplication patch(String path, ContextHandler<O> handler) {
+    public FountainApplication patch(String path, ContextHandler<?> handler) {
         router.patch(path, handler);
         return this;
     }
 
     // ---- Typed body handler delegates ----
 
-    public <R, O> FountainApplication get(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> FountainApplication get(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         router.get(path, bodyType, handler);
         return this;
     }
 
-    public <R, O> FountainApplication post(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> FountainApplication post(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         router.post(path, bodyType, handler);
         return this;
     }
 
-    public <R, O> FountainApplication put(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> FountainApplication put(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         router.put(path, bodyType, handler);
         return this;
     }
 
-    public <R, O> FountainApplication delete(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> FountainApplication delete(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         router.delete(path, bodyType, handler);
         return this;
     }
 
-    public <R, O> FountainApplication patch(String path, Class<R> bodyType, FountainHandler<R, O> handler) {
+    public <R> FountainApplication patch(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         router.patch(path, bodyType, handler);
         return this;
     }
