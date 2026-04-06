@@ -32,7 +32,6 @@ public class FountainServer {
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private ExecutorService virtualThreadExecutor;
-    private Semaphore concurrencyLimiter;
     private Channel serverChannel;
 
     public FountainServer(int port, Router router) {
@@ -47,7 +46,7 @@ public class FountainServer {
 
     public void start() throws InterruptedException {
         virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
-        concurrencyLimiter = new Semaphore(maxVirtualThreads);
+        Semaphore concurrencyLimiter = new Semaphore(maxVirtualThreads);
 
         bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup();
@@ -55,7 +54,8 @@ public class FountainServer {
         ServerBootstrap bootstrap = new ServerBootstrap();
         bootstrap.group(bossGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
-                .childHandler(new FountainChannelInitializer(router, virtualThreadExecutor, concurrencyLimiter))
+                .childHandler(new FountainChannelInitializer(router, virtualThreadExecutor,
+                    concurrencyLimiter))
                 .option(ChannelOption.SO_BACKLOG, 1024)
                 .childOption(ChannelOption.SO_KEEPALIVE, true);
 

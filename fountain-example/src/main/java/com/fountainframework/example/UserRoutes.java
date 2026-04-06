@@ -22,7 +22,6 @@ import java.util.concurrent.atomic.AtomicLong;
  *   POST   /users               → create user (JSON body)
  *   GET    /users/:id           → get user by id
  *   DELETE /users/:id           → delete user by id
- *   GET    /api/v1/status       → grouped route example
  * </pre>
  */
 @FountainRouter
@@ -76,10 +75,6 @@ public class UserRoutes implements RouterConfigurer {
             return HttpResponse.ok("Deleted user " + id);
         });
 
-        // Route group example
-        router.group("/api/v1", api ->
-                api.get("/status", ctx ->
-                        HttpResponse.json("{\"status\":\"ok\"}")));
     }
 
     public record User(long id, String name, String email) {
