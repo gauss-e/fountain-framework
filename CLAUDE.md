@@ -4,7 +4,7 @@
 
 Fountain is a lightweight Java HTTP framework built on [Netty](https://netty.io/), inspired by Go's [Gin](https://github.com/gin-gonic/gin). It aims for zero-reflection dispatch, virtual-thread concurrency, and a clean functional handler API.
 
-**Requirements:** Java 21+, Maven 3.9+
+**Requirements:** Java 25+, Maven 3.9+
 
 ## Module Structure
 
