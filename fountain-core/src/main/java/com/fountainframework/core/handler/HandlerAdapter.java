@@ -4,7 +4,8 @@ import com.fountainframework.core.serialize.BodyReader;
 import com.fountainframework.core.serialize.ResponseWriter;
 
 /**
- * Adapts {@link FountainHandler} and {@link ContextHandler} into a unified {@link RouteHandler}.
+ * Adapts {@link ContextHandler}, {@link SimpleHandler} and {@link FountainHandler}
+ * into a unified {@link RouteHandler}.
  * <p>
  * Adaptation happens once at route registration time — no per-request overhead.
  * The resulting {@link RouteHandler} is a direct function call chain:
@@ -21,15 +22,30 @@ public final class HandlerAdapter {
     }
 
     /**
-     * Adapt a context-only handler.
+     * Adapt a context handler.
      * <p>
-     * {@code ? extends O} — handler may return any subtype of O (covariant output).
+     * Pipeline: FountainContext.current().entry() → handler.handle(entry) → responseWriter.write(result)
      * <p>
-     * Pipeline: ctx → handler.handle(ctx) → responseWriter.write(result)
+     * The {@link RequestEntry} is extracted from the current context and passed directly
+     * to the handler — no boilerplate needed.
      */
     public RouteHandler adapt(ContextHandler<?> handler) {
-        return ctx -> {
-            Object result = handler.handle(ctx);
+        return () -> {
+            Object result = handler.handle(FountainContext.current().entry());
+            return responseWriter.write(result);
+        };
+    }
+
+    /**
+     * Adapt a simple handler (no input parameters).
+     * <p>
+     * Pipeline: handler.handle() → responseWriter.write(result)
+     * <p>
+     * The handler may optionally access the request context via {@link FountainContext#current()}.
+     */
+    public RouteHandler adapt(SimpleHandler<?> handler) {
+        return () -> {
+            Object result = handler.handle();
             return responseWriter.write(result);
         };
     }
@@ -49,9 +65,9 @@ public final class HandlerAdapter {
      * @param bodyType the Class token for R — captured at registration time, used for deserialization
      */
     public <R> RouteHandler adapt(Class<R> bodyType, FountainHandler<? super R, ?> handler) {
-        return ctx -> {
-            R body = bodyReader.read(ctx.body(), bodyType);
-            Object result = handler.handle(body, ctx);
+        return () -> {
+            R body = bodyReader.read(FountainContext.current().body(), bodyType);
+            Object result = handler.handle(body);
             return responseWriter.write(result);
         };
     }

@@ -18,10 +18,10 @@ import java.util.Properties;
  *   <li><b>Config file</b> from the classpath (first found wins, no merging):
  *       {@code config.properties}, {@code config.yaml/yml},
  *       {@code application.properties}, {@code application.yaml/yml}</li>
- *   <li><b>Built-in defaults</b> defined in {@link ConfigKeys}</li>
+ *   <li><b>Built-in defaults</b> defined in {@link FountainServerProperties}</li>
  * </ol>
  *
- * @see ConfigKeys for all supported keys and their defaults
+ * @see FountainServerProperties for all supported keys and their defaults
  */
 public final class FountainConfig {
 
@@ -174,10 +174,10 @@ public final class FountainConfig {
     // ---- Convenience methods for known keys ----
 
     public int getPort() {
-        return getInt(ConfigKeys.SERVER_PORT, ConfigKeys.SERVER_PORT_DEFAULT);
+        return getInt(FountainServerProperties.SERVER_PORT, FountainServerProperties.SERVER_PORT_DEFAULT);
     }
 
     public int getMaxConcurrency() {
-        return getInt(ConfigKeys.SERVER_MAX_CONCURRENCY, ConfigKeys.SERVER_MAX_CONCURRENCY_DEFAULT);
+        return getInt(FountainServerProperties.SERVER_MAX_CONCURRENCY, FountainServerProperties.SERVER_MAX_CONCURRENCY_DEFAULT);
     }
 }

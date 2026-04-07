@@ -1,106 +1,69 @@
 package com.fountainframework.core.handler;
 
 import com.fountainframework.core.http.FountainPoolRequest;
-import com.fountainframework.core.http.HttpHeaders;
-import com.fountainframework.core.http.HttpMethod;
 
-import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 
 /**
- * Request context passed to every handler.
- * Provides access to path parameters, query parameters, headers, and raw body.
+ * Request context bound to the current virtual thread via {@link ScopedValue}.
  * <p>
- * Body deserialization is handled externally by {@link com.fountainframework.core.serialize.BodyReader}
- * via the {@link HandlerAdapter} — this class is intentionally free of serialization concerns (SRP).
+ * Similar to Spring's {@code RequestContextHolder}. Provides:
+ * <ul>
+ *   <li>{@link #entry()} — the {@link RequestEntry} for handler parameter access</li>
+ *   <li>{@link #request()} — the raw {@link FountainPoolRequest} for framework internals</li>
+ * </ul>
+ * <p>
+ * Day-to-day handler code works through the {@link RequestEntry} interface
+ * (passed directly to {@link ContextHandler}). This class is reserved for
+ * framework-level concerns: ScopedValue binding, body access for deserialization,
+ * and future extensions (middleware, attributes, etc.).
  */
 public final class FountainContext {
 
-    private final FountainPoolRequest request;
-    private final Map<String, String> pathParams;
+    private static final ScopedValue<FountainContext> SCOPE = ScopedValue.newInstance();
+
+    private final FountainEntry entry;
 
     public FountainContext(FountainPoolRequest request, Map<String, String> pathParams) {
-        this.request = request;
-        this.pathParams = pathParams != null ? pathParams : Collections.emptyMap();
+        this.entry = new FountainEntry(request, pathParams);
     }
 
-    // ---- Path parameters ----
-
-    public String pathParam(String name) {
-        return pathParams.get(name);
+    /**
+     * Returns the context bound to the current virtual thread.
+     *
+     * @throws java.util.NoSuchElementException if called outside a request scope
+     */
+    public static FountainContext current() {
+        return SCOPE.get();
     }
 
-    public int pathParamAsInt(String name) {
-        return Integer.parseInt(pathParams.get(name));
+    /**
+     * Returns the {@link ScopedValue} carrier — used internally by the router
+     * to bind the context before handler execution.
+     */
+    public static ScopedValue<FountainContext> scope() {
+        return SCOPE;
     }
 
-    public long pathParamAsLong(String name) {
-        return Long.parseLong(pathParams.get(name));
+    /**
+     * The {@link RequestEntry} providing typed access to path params, query params,
+     * headers, and request metadata. This is what {@link ContextHandler} receives.
+     */
+    public RequestEntry entry() {
+        return entry;
     }
 
-    // ---- Query parameters ----
-
-    public String queryParam(String name) {
-        return request.queryParameter(name);
-    }
-
-    public String queryParam(String name, String defaultValue) {
-        String value = request.queryParameter(name);
-        return value != null ? value : defaultValue;
-    }
-
-    public List<String> queryParams(String name) {
-        return request.queryParameters(name);
-    }
-
-    // ---- Headers ----
-
-    public String header(String name) {
-        return request.header(name);
-    }
-
-    public HttpHeaders headers() {
-        return request.headers();
-    }
-
-    public String contentType() {
-        return request.contentType();
-    }
-
-    // ---- Body (raw access) ----
-
+    /**
+     * Raw request body — used internally by {@link HandlerAdapter} for deserialization.
+     */
     public byte[] body() {
-        return request.body();
+        return entry.body();
     }
 
-    public String bodyAsString() {
-        return request.bodyAsString();
-    }
-
-    // ---- Request metadata ----
-
-    public HttpMethod method() {
-        return request.method();
-    }
-
-    public String path() {
-        return request.path();
-    }
-
-    public String uri() {
-        return request.uri();
-    }
-
-    public String remoteAddress() {
-        return request.remoteAddress();
-    }
-
-    public boolean isKeepAlive() {
-        return request.isKeepAlive();
-    }
-
+    /**
+     * The underlying request object — for framework-internal use.
+     */
     public FountainPoolRequest request() {
-        return request;
+        return entry.getRequest();
     }
 }
