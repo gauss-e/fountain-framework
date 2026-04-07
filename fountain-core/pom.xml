@@ -50,7 +50,7 @@
         <!-- Logging -->
         <dependency>
             <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
+            <artifactId>logback-core</artifactId>
         </dependency>
     </dependencies>
 </project>

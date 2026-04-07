@@ -16,8 +16,9 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.fountainframework</groupId>
+            <groupId>com.fountainframework.boot</groupId>
             <artifactId>fountain-core</artifactId>
+            <version>1.0.0-SNAPSHOT</version>
         </dependency>
     </dependencies>
 </project>
