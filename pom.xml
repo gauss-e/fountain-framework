@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.fountainframework</groupId>
+    <groupId>com.fountainframework.boot</groupId>
     <artifactId>fountain-framework</artifactId>
     <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
@@ -14,6 +14,7 @@
 
     <modules>
         <module>fountain-core</module>
+        <module>fountain-all</module>
         <module>fountain-example</module>
     </modules>
 
@@ -46,6 +47,11 @@
             <dependency>
                 <groupId>com.fountainframework</groupId>
                 <artifactId>fountain-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fountainframework</groupId>
+                <artifactId>fountain-all</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

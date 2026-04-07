@@ -88,4 +88,8 @@ public class HttpResponse {
     public static HttpResponse error(String message) {
         return new HttpResponse(500).body(message).contentType("text/plain; charset=UTF-8");
     }
+
+    public static HttpResponse serviceUnavailable() {
+        return new HttpResponse(503).body("Service Unavailable").contentType("text/plain; charset=UTF-8");
+    }
 }

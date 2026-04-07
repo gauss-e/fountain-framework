@@ -8,31 +8,31 @@ import java.util.*;
  */
 public class HttpHeaders implements Iterable<Map.Entry<String, List<String>>> {
 
-    private final Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    private final Map<String, List<String>> headers = new HashMap<>();
 
     public HttpHeaders add(String name, String value) {
-        headers.computeIfAbsent(name, _ -> new ArrayList<>()).add(value);
+        headers.computeIfAbsent(name.toLowerCase(), _ -> new ArrayList<>()).add(value);
         return this;
     }
 
     public HttpHeaders set(String name, String value) {
         List<String> values = new ArrayList<>();
         values.add(value);
-        headers.put(name, values);
+        headers.put(name.toLowerCase(), values);
         return this;
     }
 
     public String get(String name) {
-        List<String> values = headers.get(name);
+        List<String> values = headers.get(name.toLowerCase());
         return (values != null && !values.isEmpty()) ? values.getFirst() : null;
     }
 
     public List<String> getAll(String name) {
-        return headers.getOrDefault(name, Collections.emptyList());
+        return headers.getOrDefault(name.toLowerCase(), Collections.emptyList());
     }
 
     public boolean contains(String name) {
-        return headers.containsKey(name);
+        return headers.containsKey(name.toLowerCase());
     }
 
     public Set<String> names() {

@@ -6,7 +6,7 @@
         </encoder>
     </appender>
 
-    <logger name="com.fountainframework" level="DEBUG"/>
+    <logger name="com.fountainframework" level="INFO"/>
     <logger name="io.netty" level="INFO"/>
 
     <root level="INFO">

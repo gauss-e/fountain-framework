@@ -10,15 +10,14 @@
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>fountain-example</artifactId>
-    <name>Fountain Examples</name>
-    <description>Example applications using Fountain framework</description>
+    <artifactId>fountain-all</artifactId>
+    <name>Fountain All</name>
+    <description>Aggregate module — import this single dependency to pull in all Fountain modules</description>
 
     <dependencies>
         <dependency>
-            <groupId>com.fountainframework.boot</groupId>
+            <groupId>com.fountainframework</groupId>
             <artifactId>fountain-core</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
         </dependency>
     </dependencies>
 </project>

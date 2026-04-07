@@ -29,17 +29,18 @@ public class Router {
 
     private static final Logger log = LoggerFactory.getLogger(Router.class);
 
-    private final Map<HttpMethod, List<RouteEntry>> routeTable = new EnumMap<>(HttpMethod.class);
+    private final Map<HttpMethod, RouteTrie> routeTries;
     private final HandlerAdapter adapter;
     private final String prefix;
 
     public Router(HandlerAdapter adapter) {
-        this(adapter, "");
+        this(adapter, "", new EnumMap<>(HttpMethod.class));
     }
 
-    private Router(HandlerAdapter adapter, String prefix) {
+    private Router(HandlerAdapter adapter, String prefix, Map<HttpMethod, RouteTrie> sharedTries) {
         this.adapter = adapter;
         this.prefix = prefix;
+        this.routeTries = sharedTries;
     }
 
     // ---- Context-only handlers (covariant output: handler can return any type) ----
@@ -97,12 +98,8 @@ public class Router {
     // ---- Route groups ----
 
     public Router group(String groupPrefix, Consumer<Router> configure) {
-        Router sub = new Router(adapter, this.prefix + normalizePath(groupPrefix));
+        Router sub = new Router(adapter, this.prefix + normalizePath(groupPrefix), this.routeTries);
         configure.accept(sub);
-        for (var entry : sub.routeTable.entrySet()) {
-            routeTable.computeIfAbsent(entry.getKey(), _ -> new ArrayList<>())
-                    .addAll(entry.getValue());
-        }
         return this;
     }
 
@@ -111,74 +108,61 @@ public class Router {
     private Router addRoute(HttpMethod method, String path, RouteHandler handler) {
         String fullPath = prefix + normalizePath(path);
         RouteEntry entry = new RouteEntry(method, fullPath, handler);
-        routeTable.computeIfAbsent(method, _ -> new ArrayList<>()).add(entry);
+        RouteTrie trie = routeTries.computeIfAbsent(method, _ -> new RouteTrie());
+        trie.addRoute(entry.segments(), entry.isParam(), entry.paramNames(),
+                entry.hasWildcard(), handler);
         log.info("Registered route: {} {}", method, fullPath);
         return this;
     }
 
     /**
      * Match a request and dispatch to the handler. Returns null if no route matches.
+     * <p>
+     * Uses a segment-level trie for O(depth) lookup instead of O(route-count) linear scan.
      */
     public HttpResponse handle(FountainPoolRequest request) throws Exception {
-        List<RouteEntry> routes = routeTable.get(request.method());
-        if (routes == null) {
+        RouteTrie trie = routeTries.get(request.method());
+        if (trie == null) {
             return null;
         }
 
-        String path = request.path();
-        String[] requestSegments = splitPath(path);
-
-        for (RouteEntry route : routes) {
-            Map<String, String> params = tryMatch(route, requestSegments);
-            if (params != null) {
-                FountainContext ctx = new FountainContext(request, params);
-                return route.handler().handle(ctx);
-            }
+        String[] requestSegments = splitPath(request.path());
+        RouteTrie.MatchResult result = trie.match(requestSegments);
+        if (result == null) {
+            return null;
         }
-        return null;
+
+        FountainContext ctx = new FountainContext(request, result.params());
+        return result.handler().handle(ctx);
     }
 
-    private Map<String, String> tryMatch(RouteEntry route, String[] requestSegments) {
-        String[] routeSegments = route.segments();
-        boolean[] isParam = route.isParam();
-        String[] paramNames = route.paramNames();
-
-        if (route.hasWildcard()) {
-            if (requestSegments.length < routeSegments.length) {
-                return null;
-            }
-        } else {
-            if (requestSegments.length != routeSegments.length) {
-                return null;
-            }
-        }
-
-        Map<String, String> params = null;
-        for (int i = 0; i < routeSegments.length; i++) {
-            if (isParam[i]) {
-                if (params == null) {
-                    params = new LinkedHashMap<>(4);
-                }
-                params.put(paramNames[i], requestSegments[i]);
-            } else {
-                if (!routeSegments[i].equals(requestSegments[i])) {
-                    return null;
-                }
-            }
-        }
-
-        return params != null ? params : Collections.emptyMap();
-    }
-
-    private static String[] splitPath(String path) {
+    static String[] splitPath(String path) {
         if (path == null || path.isEmpty() || path.equals("/")) {
             return new String[0];
         }
-        String p = path.startsWith("/") ? path.substring(1) : path;
-        if (p.endsWith("/")) {
-            p = p.substring(0, p.length() - 1);
+        int start = path.charAt(0) == '/' ? 1 : 0;
+        int end = path.charAt(path.length() - 1) == '/' ? path.length() - 1 : path.length();
+        if (start >= end) {
+            return new String[0];
         }
-        return p.split("/");
+
+        // Count segments first to avoid ArrayList overhead
+        int count = 1;
+        for (int i = start; i < end; i++) {
+            if (path.charAt(i) == '/') count++;
+        }
+
+        String[] segments = new String[count];
+        int segIdx = 0;
+        int segStart = start;
+        for (int i = start; i < end; i++) {
+            if (path.charAt(i) == '/') {
+                segments[segIdx++] = path.substring(segStart, i);
+                segStart = i + 1;
+            }
+        }
+        segments[segIdx] = path.substring(segStart, end);
+        return segments;
     }
 
     private static String normalizePath(String path) {
@@ -189,6 +173,6 @@ public class Router {
     }
 
     public int routeCount() {
-        return routeTable.values().stream().mapToInt(List::size).sum();
+        return routeTries.values().stream().mapToInt(RouteTrie::routeCount).sum();
     }
 }
