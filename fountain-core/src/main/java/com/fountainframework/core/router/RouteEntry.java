@@ -43,9 +43,9 @@ public final class RouteEntry {
             this.isParam = new boolean[parts.length];
             this.paramNames = new String[parts.length];
             for (int i = 0; i < parts.length; i++) {
-                if (parts[i].startsWith(":")) {
+                if (parts[i].startsWith("{") && parts[i].endsWith("}")) {
                     isParam[i] = true;
-                    paramNames[i] = parts[i].substring(1);
+                    paramNames[i] = parts[i].substring(1, parts[i].length() - 1);
                     segments[i] = null;
                 } else {
                     isParam[i] = false;

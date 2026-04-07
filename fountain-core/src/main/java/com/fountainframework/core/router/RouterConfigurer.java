@@ -9,8 +9,8 @@ package com.fountainframework.core.router;
  * public class UserRoutes implements RouterConfigurer {
  *     @Override
  *     public void configure(Router router) {
- *         router.get("/users/:id", ctx -> {
- *             long id = ctx.pathParamAsLong("id");
+ *         router.get("/users/:id", () -> {
+ *             long id = FountainContext.current().pathParamAsLong("id");
  *             return HttpResponse.ok("User: " + id);
  *         });
  *     }

@@ -34,7 +34,7 @@ public class ExampleApp {
     public static class HealthRoutes implements RouterConfigurer {
         @Override
         public void configure(Router router) {
-            router.get("/health", ctx ->
+            router.get("/health", entry ->
                     HttpResponse.json("{\"healthy\":true}"));
         }
     }

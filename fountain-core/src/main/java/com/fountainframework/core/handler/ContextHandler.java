@@ -1,24 +1,28 @@
 package com.fountainframework.core.handler;
 
 /**
- * Functional handler that operates on the request context directly, without typed body binding.
+ * Functional handler that receives a {@link RequestEntry} containing
+ * path parameters, query parameters, headers, and request metadata.
  * <p>
- * Analogous to JDK's {@code Supplier<T>} / {@code Function<Context, O>} — takes context, produces output.
- * Use this for routes where you only need path params, query params, or raw body access.
- *
+ * Eliminates boilerplate — no static calls needed:
  * <pre>{@code
- * // Returns HttpResponse directly
- * router.get("/hello", ctx -> HttpResponse.ok("Hello!"));
+ * router.get("/users/{id}", entry -> {
+ *     long id = entry.pathParamAsLong("id");
+ *     return userService.findById(id);
+ * });
  *
- * // Returns a POJO — auto-serialized to JSON
- * router.get("/users", ctx -> List.copyOf(users.values()));
+ * router.delete("/users/{id}", entry -> {
+ *     userService.delete(entry.pathParamAsLong("id"));
+ *     return HttpResponse.ok();
+ * });
  * }</pre>
  *
  * @param <O> response output type
- * @see FountainHandler for handlers with typed request body deserialization
+ * @see SimpleHandler for handlers that need no parameters at all
+ * @see FountainHandler for POST/PUT handlers with typed request body
  */
 @FunctionalInterface
 public interface ContextHandler<O> {
 
-    O handle(FountainContext ctx) throws Exception;
+    O handle(RequestEntry entry) throws Exception;
 }

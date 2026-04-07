@@ -11,15 +11,16 @@ import java.util.*;
 import java.util.function.Consumer;
 
 /**
- * High-performance HTTP router with Gin-style path parameters and generic typed handlers.
+ * High-performance HTTP router with path parameters and generic typed handlers.
  * <p>
- * Two handler styles:
+ * Three handler styles:
  * <ul>
- *   <li>{@link ContextHandler} — context-only: {@code router.get("/hello", ctx -> ...)}</li>
- *   <li>{@link FountainHandler} — typed body: {@code router.post("/users", User.class, (user, ctx) -> ...)}</li>
+ *   <li>{@link ContextHandler} — receives {@link FountainEntry}: {@code router.get("/users/{id}", entry -> ...)}</li>
+ *   <li>{@link SimpleHandler} — no input: {@code router.get("/ping", () -> ...)}</li>
+ *   <li>{@link FountainHandler} — typed body: {@code router.post("/users", User.class, user -> ...)}</li>
  * </ul>
  * <p>
- * Both styles support any return type {@code O} — the {@link com.fountainframework.core.serialize.ResponseWriter}
+ * All styles support any return type {@code O} — the {@link com.fountainframework.core.serialize.ResponseWriter}
  * auto-converts POJOs to JSON, Strings to text/plain, and passes {@link HttpResponse} through unchanged.
  * <p>
  * Handlers are adapted into a unified {@link RouteHandler} at registration time via {@link HandlerAdapter},
@@ -43,7 +44,7 @@ public class Router {
         this.routeTries = sharedTries;
     }
 
-    // ---- Context-only handlers (covariant output: handler can return any type) ----
+    // ---- ContextHandler — receives FountainEntry (path params + query params) ----
 
     public Router get(String path, ContextHandler<?> handler) {
         return addRoute(HttpMethod.GET, path, adapter.adapt(handler));
@@ -73,11 +74,37 @@ public class Router {
         return addRoute(HttpMethod.OPTIONS, path, adapter.adapt(handler));
     }
 
-    // ---- Typed body handlers (PECS: ? super R for input, ? for output) ----
+    // ---- SimpleHandler — no input parameters ----
 
-    public <R> Router get(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
-        return addRoute(HttpMethod.GET, path, adapter.adapt(bodyType, handler));
+    public Router get(String path, SimpleHandler<?> handler) {
+        return addRoute(HttpMethod.GET, path, adapter.adapt(handler));
     }
+
+    public Router post(String path, SimpleHandler<?> handler) {
+        return addRoute(HttpMethod.POST, path, adapter.adapt(handler));
+    }
+
+    public Router put(String path, SimpleHandler<?> handler) {
+        return addRoute(HttpMethod.PUT, path, adapter.adapt(handler));
+    }
+
+    public Router delete(String path, SimpleHandler<?> handler) {
+        return addRoute(HttpMethod.DELETE, path, adapter.adapt(handler));
+    }
+
+    public Router patch(String path, SimpleHandler<?> handler) {
+        return addRoute(HttpMethod.PATCH, path, adapter.adapt(handler));
+    }
+
+    public Router head(String path, SimpleHandler<?> handler) {
+        return addRoute(HttpMethod.HEAD, path, adapter.adapt(handler));
+    }
+
+    public Router options(String path, SimpleHandler<?> handler) {
+        return addRoute(HttpMethod.OPTIONS, path, adapter.adapt(handler));
+    }
+
+    // ---- Typed body handlers (PECS: ? super R for input, ? for output) ----
 
     public <R> Router post(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         return addRoute(HttpMethod.POST, path, adapter.adapt(bodyType, handler));
@@ -119,6 +146,8 @@ public class Router {
      * Match a request and dispatch to the handler. Returns null if no route matches.
      * <p>
      * Uses a segment-level trie for O(depth) lookup instead of O(route-count) linear scan.
+     * Binds the {@link FountainContext} to the current thread via {@link ScopedValue}
+     * so handlers can access it via {@link FountainContext#current()}.
      */
     public HttpResponse handle(FountainPoolRequest request) throws Exception {
         RouteTrie trie = routeTries.get(request.method());
@@ -133,7 +162,7 @@ public class Router {
         }
 
         FountainContext ctx = new FountainContext(request, result.params());
-        return result.handler().handle(ctx);
+        return ScopedValue.where(FountainContext.scope(), ctx).call(result.handler()::handle);
     }
 
     static String[] splitPath(String path) {

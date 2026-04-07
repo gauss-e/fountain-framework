@@ -1,9 +1,10 @@
 package com.fountainframework.core;
 
 import com.fountainframework.core.config.FountainConfig;
-import com.fountainframework.core.handler.ContextHandler;
 import com.fountainframework.core.handler.FountainHandler;
 import com.fountainframework.core.handler.HandlerAdapter;
+import com.fountainframework.core.handler.ContextHandler;
+import com.fountainframework.core.handler.SimpleHandler;
 import com.fountainframework.core.router.Router;
 import com.fountainframework.core.serialize.BodyReader;
 import com.fountainframework.core.serialize.JacksonBodyReader;
@@ -17,16 +18,19 @@ import java.util.function.Consumer;
 
 /**
  * Main entry point for a Fountain application.
- * Provides a Gin-style fluent API for route registration and server startup.
+ * Provides a fluent API for route registration and server startup.
  *
  * <pre>{@code
  * FountainApplication app = FountainApplication.create();
  *
- * // Context-only handler
- * app.get("/hello", ctx -> HttpResponse.ok("Hello!"));
+ * // ContextHandler — receives FountainEntry with path/query params
+ * app.get("/users/{id}", entry -> userService.findById(entry.pathParamAsLong("id")));
  *
- * // Typed handler — auto-deserialize body, auto-serialize response
- * app.post("/users", User.class, (user, ctx) ->
+ * // SimpleHandler — no input parameters
+ * app.get("/ping", () -> HttpResponse.ok("pong"));
+ *
+ * // FountainHandler — auto-deserialize body, auto-serialize response
+ * app.post("/users", User.class, user ->
  *         new UserResponse(user.id(), user.name()));
  *
  * app.start();  // port from config or default 8080
@@ -61,7 +65,7 @@ public class FountainApplication {
         return new FountainApplication(router, config);
     }
 
-    // ---- Context-only handler delegates ----
+    // ---- ContextHandler delegates ----
 
     public FountainApplication get(String path, ContextHandler<?> handler) {
         router.get(path, handler);
@@ -88,12 +92,34 @@ public class FountainApplication {
         return this;
     }
 
-    // ---- Typed body handler delegates ----
+    // ---- SimpleHandler delegates ----
 
-    public <R> FountainApplication get(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
-        router.get(path, bodyType, handler);
+    public FountainApplication get(String path, SimpleHandler<?> handler) {
+        router.get(path, handler);
         return this;
     }
+
+    public FountainApplication post(String path, SimpleHandler<?> handler) {
+        router.post(path, handler);
+        return this;
+    }
+
+    public FountainApplication put(String path, SimpleHandler<?> handler) {
+        router.put(path, handler);
+        return this;
+    }
+
+    public FountainApplication delete(String path, SimpleHandler<?> handler) {
+        router.delete(path, handler);
+        return this;
+    }
+
+    public FountainApplication patch(String path, SimpleHandler<?> handler) {
+        router.patch(path, handler);
+        return this;
+    }
+
+    // ---- Typed body handler delegates ----
 
     public <R> FountainApplication post(String path, Class<R> bodyType, FountainHandler<? super R, ?> handler) {
         router.post(path, bodyType, handler);

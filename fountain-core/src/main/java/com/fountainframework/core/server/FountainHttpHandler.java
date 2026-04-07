@@ -60,24 +60,22 @@ public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpReq
 
         virtualThreadPool.execute(() -> {
             try {
-                HttpResponse response;
-                try {
-                    response = router.handle(request);
-                    if (response == null) {
-                        response = HttpResponse.notFound();
-                    }
-                } catch (Exception e) {
-                    log.error("Error handling {} {}", request.method(), request.path(), e);
-                    response = HttpResponse.error("Internal Server Error");
-                }
-
-                HttpResponse finalResponse = response;
-                ctx.channel().eventLoop().execute(() ->
-                        writeResponse(ctx, keepAlive, finalResponse));
+                HttpResponse response = dispatch(request);
+                ctx.channel().eventLoop().execute(() -> writeResponse(ctx, keepAlive, response));
             } finally {
                 concurrencyLimiter.release();
             }
         });
+    }
+
+    private HttpResponse dispatch(FountainPoolRequest request) {
+        try {
+            HttpResponse response = router.handle(request);
+            return response != null ? response : HttpResponse.notFound();
+        } catch (Exception e) {
+            log.error("Error handling {} {}", request.method(), request.path(), e);
+            return HttpResponse.error("Internal Server Error");
+        }
     }
 
     private FountainPoolRequest convertRequest(ChannelHandlerContext ctx, FullHttpRequest nettyRequest) {

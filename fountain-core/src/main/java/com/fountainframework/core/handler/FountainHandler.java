@@ -11,9 +11,10 @@ package com.fountainframework.core.handler;
  *
  * The framework resolves {@code R} at registration time via the provided {@code Class<R>} token
  * and automatically deserializes the request body — no annotation required.
+ * Access the request context via {@link FountainContext#current()} if needed.
  *
  * <pre>{@code
- * router.post("/users", User.class, (user, ctx) -> {
+ * router.post("/users", User.class, user -> {
  *     long id = userService.save(user);
  *     return new CreatedResponse(id, user.name());
  * });
@@ -21,10 +22,11 @@ package com.fountainframework.core.handler;
  *
  * @param <R> request body type
  * @param <O> response output type
- * @see ContextHandler for handlers that don't need a typed body
+ * @see ContextHandler for handlers that receive path/query parameters
+ * @see SimpleHandler for handlers that don't need any input
  */
 @FunctionalInterface
 public interface FountainHandler<R, O> {
 
-    O handle(R body, FountainContext ctx) throws Exception;
+    O handle(R body) throws Exception;
 }

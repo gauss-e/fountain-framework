@@ -17,7 +17,7 @@ import java.lang.annotation.Target;
  * public class ApiRoutes implements RouterConfigurer {
  *     @Override
  *     public void configure(Router router) {
- *         router.get("/hello", ctx -> HttpResponse.ok("Hello!"));
+ *         router.get("/hello", () -> HttpResponse.ok("Hello!"));
  *     }
  * }
  * }</pre>

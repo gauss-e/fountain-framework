@@ -11,10 +11,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Example router demonstrating both handler styles:
+ * Example router demonstrating handler styles:
  * <ul>
- *   <li>{@code ContextHandler<O>} — for GET/DELETE routes (context-only)</li>
- *   <li>{@code FountainHandler<R, O>} — for POST/PUT routes (typed body auto-deserialization)</li>
+ *   <li>{@code ContextHandler<O>} — receives FountainEntry with path/query params</li>
+ *   <li>{@code SimpleHandler<O>} — no input parameters</li>
+ *   <li>{@code FountainHandler<R, O>} — typed body auto-deserialization (POST/PUT)</li>
  * </ul>
  */
 @FountainRouter
@@ -26,44 +27,41 @@ public class UserRoutes implements RouterConfigurer {
     @Override
     public void configure(Router router) {
 
-        // ContextHandler<O> — context only, return type auto-serialized
+        // ContextHandler<O> — FountainEntry passed directly, no boilerplate
 
-        router.get("/", ctx ->
-                Map.of("message", "Welcome to Fountain Framework", "version", "1.0.0"));
+        router.get("/", entry ->
+                Map.of("message", "Welcome to Fountain Framework", "version", "1.0.0"))
+            .get("/hello", entry -> {
+                String name = entry.queryParam("name", "Fountain");
+                return HttpResponse.ok("Hello, " + name + "!");
+            })
+            .get("/users", entry -> List.copyOf(users.values()))
+            .get("/users/{id}", entry -> {
+                long id = entry.pathParamAsLong("id");
+                User user = users.get(id);
+                if (user == null) {
+                    return HttpResponse.notFound();
+                }
+                return user;  // auto-serialized to JSON
+            })
 
-        router.get("/hello", ctx -> {
-            String name = ctx.queryParam("name", "Fountain");
-            return HttpResponse.ok("Hello, " + name + "!");
-        });
+            // FountainHandler<R, O> — typed body auto-deserialized
+            .post("/users", User.class, user -> {
+                long id = idGen.getAndIncrement();
+                User saved = new User(id, user.name(), user.email());
+                users.put(id, saved);
+                return saved;  // auto-serialized to JSON
+            })
 
-        // Return POJO list — auto-serialized to JSON by ResponseWriter
-        router.get("/users", ctx -> List.copyOf(users.values()));
-
-        router.get("/users/:id", ctx -> {
-            long id = ctx.pathParamAsLong("id");
-            User user = users.get(id);
-            if (user == null) {
-                return HttpResponse.notFound();
-            }
-            return user;  // auto-serialized to JSON
-        });
-
-        // FountainHandler<R, O> — typed body: User is auto-deserialized from JSON
-        router.post("/users", User.class, (user, ctx) -> {
-            long id = idGen.getAndIncrement();
-            User saved = new User(id, user.name(), user.email());
-            users.put(id, saved);
-            return saved;  // auto-serialized to JSON
-        });
-
-        router.delete("/users/:id", ctx -> {
-            long id = ctx.pathParamAsLong("id");
-            User removed = users.remove(id);
-            if (removed == null) {
-                return HttpResponse.notFound();
-            }
-            return HttpResponse.ok("Deleted user " + id);
-        });
+            // ContextHandler<O> — DELETE with path param
+            .delete("/users/{id}", entry -> {
+                long id = entry.pathParamAsLong("id");
+                User removed = users.remove(id);
+                if (removed == null) {
+                    return HttpResponse.notFound();
+                }
+                return HttpResponse.ok("Deleted user " + id);
+            });
     }
 
     public record User(long id, String name, String email) {

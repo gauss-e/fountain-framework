@@ -15,7 +15,7 @@ public class StatusRoutes implements RouterConfigurer {
     @Override
     public void configure(Router router) {
         router.group("/api/v1", api ->
-                api.get("/status", ctx ->
+                api.get("/status", entry ->
                         HttpResponse.json("{\"status\":\"ok\"}")));
     }
 }
