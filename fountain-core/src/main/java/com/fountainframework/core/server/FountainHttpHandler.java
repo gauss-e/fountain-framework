@@ -1,85 +1,156 @@
 package com.fountainframework.core.server;
 
 import com.fountainframework.core.http.FountainPoolRequest;
-import com.fountainframework.core.http.HttpHeaders;
-import com.fountainframework.core.http.HttpMethod;
+import com.fountainframework.core.http.FountainRequest;
 import com.fountainframework.core.http.HttpResponse;
-import com.fountainframework.core.http.HttpVersion;
 import com.fountainframework.core.router.Router;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
-import io.netty.channel.ChannelFutureListener;
+import io.netty.buffer.CompositeByteBuf;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.handler.codec.http.DefaultFullHttpResponse;
-import io.netty.handler.codec.http.FullHttpRequest;
-import io.netty.handler.codec.http.HttpHeaderNames;
-import io.netty.handler.codec.http.HttpHeaderValues;
-import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.handler.codec.http.HttpContent;
+import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpUtil;
+import io.netty.handler.codec.http.LastHttpContent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
-import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
 
 /**
- * Netty channel handler that converts Netty HTTP objects to Fountain types
- * and dispatches handler execution to virtual threads.
+ * Netty channel handler — the orchestration hub of Fountain's request lifecycle.
  * <p>
- * Netty I/O thread: parse request -> Virtual thread: run handler -> Netty I/O thread: write response
+ * Responsibilities are delegated to focused collaborators:
+ * <ul>
+ *   <li>{@link BackpressureController} — lock-free backpressure coordination
+ *       (CAS flag, park/unpark, request queueing)</li>
+ *   <li>{@link ResponseEncoder} — response head construction, chunked streaming
+ *       write with per-chunk writability checks</li>
+ * </ul>
  * <p>
- * Concurrency is bounded by a {@link Semaphore}. When the limit is reached,
- * new requests are immediately rejected with 503 Service Unavailable instead of
- * queuing unboundedly, preventing memory pressure and tail-latency degradation.
+ * This handler itself only orchestrates:
+ * <ol>
+ *   <li>Streaming request read: accumulate {@link HttpContent} chunks into a
+ *       zero-copy {@link CompositeByteBuf}</li>
+ *   <li>Dispatch: assemble a {@link FountainRequest}, acquire a concurrency permit,
+ *       submit to virtual thread pool (or queue under backpressure)</li>
+ *   <li>Route + write: execute handler on virtual thread, stream the response back</li>
+ * </ol>
  */
-public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
+public class FountainHttpHandler extends ChannelInboundHandlerAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(FountainHttpHandler.class);
+    private static final int MAX_QUEUED_REQUESTS = 256;
+
     private final Router router;
     private final ExecutorService virtualThreadPool;
     private final Semaphore concurrencyLimiter;
+    private final BackpressureController backpressure;
+    private final ResponseEncoder responseEncoder;
+
+    // ---- Per-connection streaming state (Netty I/O thread only) ----
+    private HttpRequest currentNettyRequest;
+    private CompositeByteBuf bodyAccumulator;
+    private boolean keepAlive;
 
     public FountainHttpHandler(Router router, ExecutorService virtualThreadPool, Semaphore concurrencyLimiter) {
         this.router = router;
         this.virtualThreadPool = virtualThreadPool;
         this.concurrencyLimiter = concurrencyLimiter;
+        this.backpressure = new BackpressureController(MAX_QUEUED_REQUESTS);
+        this.responseEncoder = new ResponseEncoder(backpressure);
     }
 
+    // ========================================================================
+    // Read side — Netty I/O thread
+    // ========================================================================
+
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest nettyRequest) {
-        // Retain the request so its ByteBuf and headers survive past channelRead0.
-        // The virtual thread's finally block will release via request.release().
-        nettyRequest.retain();
-        FountainPoolRequest request = convertRequest(ctx, nettyRequest);
-        boolean keepAlive = HttpUtil.isKeepAlive(nettyRequest);
+    public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        if (msg instanceof HttpRequest httpRequest) {
+            handleRequestHead(ctx, httpRequest);
+        }
+        if (msg instanceof HttpContent httpContent) {
+            handleContentChunk(ctx, httpContent);
+        }
+    }
+
+    private void handleRequestHead(ChannelHandlerContext ctx, HttpRequest httpRequest) {
+        releaseAccumulator();
+        currentNettyRequest = httpRequest;
+        keepAlive = HttpUtil.isKeepAlive(httpRequest);
+        bodyAccumulator = ctx.alloc().compositeBuffer();
+    }
+
+    private void handleContentChunk(ChannelHandlerContext ctx, HttpContent httpContent) {
+        if (currentNettyRequest == null) {
+            httpContent.release();
+            return;
+        }
+
+        ByteBuf chunk = httpContent.content();
+        if (chunk.isReadable()) {
+            bodyAccumulator.addComponent(true, chunk.retain());
+        }
+
+        if (httpContent instanceof LastHttpContent) {
+            assembleAndDispatch(ctx);
+        }
+    }
+
+    // ========================================================================
+    // Dispatch
+    // ========================================================================
+
+    private void assembleAndDispatch(ChannelHandlerContext ctx) {
+        HttpRequest nettyReq = currentNettyRequest;
+        CompositeByteBuf body = bodyAccumulator;
+        boolean currentKeepAlive = keepAlive;
+
+        currentNettyRequest = null;
+        bodyAccumulator = null;
+
+        String remoteAddress = "";
+        if (ctx.channel().remoteAddress() instanceof InetSocketAddress inet) {
+            remoteAddress = inet.getAddress().getHostAddress();
+        }
+
+        FountainPoolRequest request = new FountainPoolRequest(nettyReq, body, remoteAddress);
 
         log.debug("{} {} from {}", request.method(), request.path(), request.remoteAddress());
 
         if (!concurrencyLimiter.tryAcquire()) {
             log.warn("Server overloaded, rejecting {} {}", request.method(), request.path());
             request.release();
-            writeResponse(ctx, keepAlive, HttpResponse.serviceUnavailable());
+            responseEncoder.writeImmediate(ctx, currentKeepAlive, HttpResponse.serviceUnavailable());
             return;
         }
 
-        virtualThreadPool.execute(() -> {
+        Runnable task = () -> {
             try {
-                // Netty's writeAndFlush is thread-safe — it internally routes to the
-                // event loop, so an explicit eventLoop().execute() wrapper is redundant
-                // and adds an unnecessary queuing hop.
-                writeResponse(ctx, keepAlive, dispatch(request));
+                HttpResponse response = dispatch(request);
+                responseEncoder.writeResponse(ctx, currentKeepAlive, response);
             } finally {
                 request.release();
                 concurrencyLimiter.release();
             }
-        });
+        };
+
+        if (backpressure.isBackpressure()) {
+            if (!backpressure.enqueue(ctx, task)) {
+                log.warn("Backpressure queue full, rejecting {} {}", request.method(), request.path());
+                request.release();
+                concurrencyLimiter.release();
+                responseEncoder.writeImmediate(ctx, currentKeepAlive, HttpResponse.serviceUnavailable());
+            }
+        } else {
+            virtualThreadPool.execute(task);
+        }
     }
 
-    private HttpResponse dispatch(FountainPoolRequest request) {
+    private HttpResponse dispatch(FountainRequest request) {
         try {
             HttpResponse response = router.handle(request);
             return response != null ? response : HttpResponse.notFound();
@@ -89,58 +160,40 @@ public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpReq
         }
     }
 
-    private FountainPoolRequest convertRequest(ChannelHandlerContext ctx, FullHttpRequest nettyRequest) {
-        // Zero-copy header wrapping — delegates reads to Netty's headers directly
-        HttpHeaders headers = HttpHeaders.wrap(nettyRequest.headers());
+    // ========================================================================
+    // Writability change — Netty I/O thread
+    // ========================================================================
 
-        // Zero-copy body — hold the ByteBuf reference; byte[] is materialized
-        // lazily only when the handler actually calls body(). GET requests and
-        // other no-body requests skip allocation entirely.
-        ByteBuf content = nettyRequest.content();
-
-        String remoteAddress = "";
-        if (ctx.channel().remoteAddress() instanceof InetSocketAddress inet) {
-            remoteAddress = inet.getAddress().getHostAddress();
+    @Override
+    public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
+        if (ctx.channel().isWritable()) {
+            backpressure.onWritable(ctx, virtualThreadPool);
         }
-
-        return FountainPoolRequest.builder()
-                .method(HttpMethod.resolve(nettyRequest.method().name()))
-                .uri(nettyRequest.uri())
-                .version(HttpVersion.resolve(nettyRequest.protocolVersion().text()))
-                .headers(headers)
-                .bodyBuf(content)
-                .remoteAddress(remoteAddress)
-                .build();
+        super.channelWritabilityChanged(ctx);
     }
 
-    private void writeResponse(ChannelHandlerContext ctx, boolean keepAlive, HttpResponse response) {
-        byte[] body = response.body();
-        ByteBuf content = Unpooled.wrappedBuffer(body);
+    // ========================================================================
+    // Lifecycle
+    // ========================================================================
 
-        DefaultFullHttpResponse nettyResponse = new DefaultFullHttpResponse(
-                io.netty.handler.codec.http.HttpVersion.HTTP_1_1,
-                HttpResponseStatus.valueOf(response.statusCode()),
-                content
-        );
-
-        for (Map.Entry<String, List<String>> entry : response.headers()) {
-            for (String value : entry.getValue()) {
-                nettyResponse.headers().add(entry.getKey(), value);
-            }
-        }
-        nettyResponse.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, body.length);
-
-        if (keepAlive) {
-            ctx.write(nettyResponse);
-        } else {
-            ctx.write(nettyResponse).addListener(ChannelFutureListener.CLOSE);
-        }
-        ctx.flush();
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        releaseAccumulator();
+        backpressure.shutdown();
+        super.channelInactive(ctx);
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         log.error("Unhandled exception in channel pipeline", cause);
+        releaseAccumulator();
         ctx.close();
+    }
+
+    private void releaseAccumulator() {
+        if (bodyAccumulator != null && bodyAccumulator.refCnt() > 0) {
+            bodyAccumulator.release();
+            bodyAccumulator = null;
+        }
     }
 }

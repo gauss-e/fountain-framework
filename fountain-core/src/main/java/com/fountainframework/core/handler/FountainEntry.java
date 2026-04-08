@@ -1,6 +1,6 @@
 package com.fountainframework.core.handler;
 
-import com.fountainframework.core.http.FountainPoolRequest;
+import com.fountainframework.core.http.FountainRequest;
 
 import java.util.Collections;
 import java.util.List;
@@ -9,7 +9,7 @@ import java.util.Map;
 /**
  * Default implementation of {@link RequestEntry}.
  * <p>
- * Holds the {@link FountainPoolRequest} and extracted path parameters,
+ * Holds a {@link FountainRequest} and extracted path parameters,
  * providing the single point of access for all request data in handlers.
  * <p>
  * {@link FountainContext} retains a reference for framework-level concerns
@@ -18,15 +18,15 @@ import java.util.Map;
  */
 public final class FountainEntry implements RequestEntry {
 
-    private final FountainPoolRequest request;
+    private final FountainRequest request;
     private final Map<String, String> pathParams;
 
-    public FountainEntry(FountainPoolRequest request, Map<String, String> pathParams) {
+    public FountainEntry(FountainRequest request, Map<String, String> pathParams) {
         this.request = request;
         this.pathParams = pathParams != null ? pathParams : Collections.emptyMap();
     }
 
-    FountainPoolRequest getRequest() {
+    FountainRequest getRequest() {
         return request;
     }
 

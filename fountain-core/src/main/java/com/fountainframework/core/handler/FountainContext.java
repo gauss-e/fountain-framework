@@ -1,6 +1,6 @@
 package com.fountainframework.core.handler;
 
-import com.fountainframework.core.http.FountainPoolRequest;
+import com.fountainframework.core.http.FountainRequest;
 
 import java.util.Map;
 
@@ -10,7 +10,7 @@ import java.util.Map;
  * Similar to Spring's {@code RequestContextHolder}. Provides:
  * <ul>
  *   <li>{@link #entry()} — the {@link RequestEntry} for handler parameter access</li>
- *   <li>{@link #request()} — the raw {@link FountainPoolRequest} for framework internals</li>
+ *   <li>{@link #request()} — the {@link FountainRequest} for framework internals</li>
  * </ul>
  * <p>
  * Day-to-day handler code works through the {@link RequestEntry} interface
@@ -24,7 +24,7 @@ public final class FountainContext {
 
     private final FountainEntry entry;
 
-    public FountainContext(FountainPoolRequest request, Map<String, String> pathParams) {
+    public FountainContext(FountainRequest request, Map<String, String> pathParams) {
         this.entry = new FountainEntry(request, pathParams);
     }
 
@@ -63,7 +63,7 @@ public final class FountainContext {
     /**
      * The underlying request object — for framework-internal use.
      */
-    public FountainPoolRequest request() {
+    public FountainRequest request() {
         return entry.getRequest();
     }
 }

@@ -3,10 +3,12 @@ package com.fountainframework.core.server;
 import com.fountainframework.core.config.FountainConfig;
 import com.fountainframework.core.router.Router;
 import io.netty.bootstrap.ServerBootstrap;
+import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.WriteBufferWaterMark;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -78,6 +80,7 @@ public class FountainServer {
                 .option(ChannelOption.SO_BACKLOG, soBacklog)
                 .option(ChannelOption.SO_REUSEADDR, soReuseaddr)
                 // ---- Child (connection) socket options ----
+                .childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT)
                 .childOption(ChannelOption.SO_KEEPALIVE, soKeepalive)
                 .childOption(ChannelOption.TCP_NODELAY, tcpNodelay)
                 .childOption(ChannelOption.WRITE_BUFFER_WATER_MARK,
@@ -88,7 +91,7 @@ public class FountainServer {
                 port, NativeTransport.name(), maxConcurrency);
     }
 
-    private <T> T configOr(java.util.function.Function<FountainConfig, T> getter, T defaultValue) {
+    private <T> T configOr(Function<FountainConfig, T> getter, T defaultValue) {
         return (config != null) ? getter.apply(config) : defaultValue;
     }
 

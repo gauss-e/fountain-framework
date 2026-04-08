@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Segment-level trie for HTTP route matching.
@@ -19,11 +20,27 @@ import java.util.Map;
  * <p>
  * Lookup cost is O(depth) where depth = number of path segments (typically 3-5),
  * independent of the total number of registered routes.
+ * <p>
+ * <b>Route cache:</b> Paths that resolve to a handler with no path parameters
+ * are cached in a bounded {@link ConcurrentHashMap}. Subsequent requests to the
+ * same static path skip the trie walk entirely. Parameterized matches are never
+ * cached because the extracted values differ per request.
  */
 final class RouteTrie {
 
+    private static final int MAX_CACHE_SIZE = 1024;
+
     private final TrieNode root = new TrieNode();
     private int routeCount;
+
+    /**
+     * Bounded LRU-ish cache: static path → MatchResult.
+     * Only populated for matches that have zero path parameters.
+     * Eviction is coarse — when the cache exceeds the limit, it is cleared
+     * (hot paths re-populate quickly). This avoids the overhead of a true
+     * LRU linked list on every access while keeping memory bounded.
+     */
+    private final ConcurrentHashMap<String, MatchResult> staticCache = new ConcurrentHashMap<>();
 
     void addRoute(String[] segments, boolean[] isParam, String[] paramNames,
                   boolean hasWildcard, RouteHandler handler) {
@@ -45,9 +62,30 @@ final class RouteTrie {
             current.handler = handler;
         }
         routeCount++;
+        // Invalidate cache when routes change (registration is rare)
+        staticCache.clear();
     }
 
     MatchResult match(String[] requestSegments) {
+        return match(requestSegments, null);
+    }
+
+    /**
+     * Match request segments against the trie.
+     *
+     * @param requestSegments the path segments
+     * @param rawPath         the original path string — when non-null, enables cache
+     *                        lookup/population for static (no-param) matches
+     */
+    MatchResult match(String[] requestSegments, String rawPath) {
+        // Fast path: check the static cache first
+        if (rawPath != null) {
+            MatchResult cached = staticCache.get(rawPath);
+            if (cached != null) {
+                return cached;
+            }
+        }
+
         Map<String, String> params = null;
         TrieNode current = root;
 
@@ -81,15 +119,26 @@ final class RouteTrie {
         }
 
         // Reached end of request segments
-        if (current.handler != null) {
-            return new MatchResult(current.handler,
-                    params != null ? params : Collections.emptyMap());
+        RouteHandler handler = current.handler;
+        if (handler == null) {
+            handler = current.wildcardHandler;
         }
-        if (current.wildcardHandler != null) {
-            return new MatchResult(current.wildcardHandler,
-                    params != null ? params : Collections.emptyMap());
+        if (handler == null) {
+            return null;
         }
-        return null;
+
+        Map<String, String> resultParams = params != null ? params : Collections.emptyMap();
+        MatchResult result = new MatchResult(handler, resultParams);
+
+        // Cache only static matches (no path parameters extracted)
+        if (rawPath != null && resultParams.isEmpty()) {
+            if (staticCache.size() >= MAX_CACHE_SIZE) {
+                staticCache.clear();
+            }
+            staticCache.put(rawPath, result);
+        }
+
+        return result;
     }
 
     int routeCount() {

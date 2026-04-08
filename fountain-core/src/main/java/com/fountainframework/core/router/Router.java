@@ -1,7 +1,7 @@
 package com.fountainframework.core.router;
 
 import com.fountainframework.core.handler.*;
-import com.fountainframework.core.http.FountainPoolRequest;
+import com.fountainframework.core.http.FountainRequest;
 import com.fountainframework.core.http.HttpMethod;
 import com.fountainframework.core.http.HttpResponse;
 import org.slf4j.Logger;
@@ -149,14 +149,15 @@ public class Router {
      * Binds the {@link FountainContext} to the current thread via {@link ScopedValue}
      * so handlers can access it via {@link FountainContext#current()}.
      */
-    public HttpResponse handle(FountainPoolRequest request) throws Exception {
+    public HttpResponse handle(FountainRequest request) throws Exception {
         RouteTrie trie = routeTries.get(request.method());
         if (trie == null) {
             return HttpResponse.notFound();
         }
 
-        String[] requestSegments = splitPath(request.path());
-        RouteTrie.MatchResult result = trie.match(requestSegments);
+        String path = request.path();
+        String[] requestSegments = splitPath(path);
+        RouteTrie.MatchResult result = trie.match(requestSegments, path);
         if (result == null) {
             return null;
         }

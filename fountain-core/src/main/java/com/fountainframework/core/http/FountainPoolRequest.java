@@ -1,7 +1,8 @@
 package com.fountainframework.core.http;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.HttpUtil;
 
 import java.net.URLDecoder;
 import java.nio.charset.Charset;
@@ -9,161 +10,208 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
- * Represents an HTTP request received by the Fountain server.
- * Encapsulates all information from the raw HTTP request per RFC 7230-7235.
+ * Lazy adapter over Netty's {@link HttpRequest} and a body {@link ByteBuf}.
  * <p>
- * <b>Zero-copy optimizations:</b>
- * <ul>
- *   <li>Body is held as a Netty {@link ByteBuf} and only materialized to {@code byte[]}
- *       on first access via {@link #body()}. GET requests and other no-body requests
- *       never allocate a body array.</li>
- *   <li>Headers can wrap Netty's headers directly via {@link HttpHeaders#wrap} —
- *       see {@link FountainPoolRequest.Builder#headers(HttpHeaders)}.</li>
- * </ul>
+ * Instead of eagerly copying every field from the Netty request into a POJO,
+ * this class delegates to the underlying Netty objects on demand. Fields like
+ * {@link #path()}, {@link #body()}, and {@link #queryParameter(String)} are
+ * computed and cached on first access — if the handler never touches them,
+ * zero work is done.
  * <p>
- * When the request holds a retained {@link ByteBuf}, callers <b>must</b> invoke
- * {@link #release()} after processing to return the buffer to the pool.
+ * <b>Thread safety:</b> A single {@code FountainPoolRequest} is created on the
+ * Netty I/O thread and then handed off to exactly one virtual thread. Volatile
+ * fields protect against the publication race between those two threads. After
+ * hand-off, access is single-threaded.
+ * <p>
+ * Callers <b>must</b> invoke {@link #release()} after processing to return the
+ * body buffer to the pool.
  */
-public class FountainPoolRequest {
+public final class FountainPoolRequest implements FountainRequest {
 
     private static final byte[] EMPTY_BODY = new byte[0];
 
-    private final HttpMethod method;
-    private final String uri;
-    private final String path;
-    private final String rawQuery;
-    private volatile Map<String, List<String>> queryParameters;
-    private final HttpVersion version;
-    private final HttpHeaders headers;
-    private final String remoteAddress;
-
-    /** Netty ByteBuf — may be null (no body) or EMPTY_BUFFER. */
+    // ---- Underlying Netty objects (never null after construction) ----
+    private final HttpRequest nettyRequest;
     private final ByteBuf bodyBuf;
-    /** Lazily materialized from bodyBuf on first access. */
-    private byte[] bodyBytes;
+    private final String remoteAddr;
 
-    private FountainPoolRequest(Builder builder) {
-        this.method = builder.method;
-        this.uri = builder.uri;
-        this.version = builder.version;
-        this.headers = builder.headers;
-        this.remoteAddress = builder.remoteAddress;
-        this.bodyBuf = builder.bodyBuf;
-        this.bodyBytes = builder.bodyBytes;
+    // ---- Lazily derived fields ----
+    private volatile String path;
+    private volatile String rawQuery;
+    private volatile boolean pathParsed;
+    private volatile HttpMethod method;
+    private volatile HttpVersion version;
+    private volatile HttpHeaders wrappedHeaders;
+    private volatile Map<String, List<String>> queryParameters;
+    private volatile byte[] bodyBytes;
 
-        // Only split path from query — defer query parsing until first access
-        int queryIndex = uri.indexOf('?');
-        if (queryIndex >= 0) {
-            this.path = uri.substring(0, queryIndex);
-            this.rawQuery = uri.substring(queryIndex + 1);
-        } else {
-            this.path = uri;
-            this.rawQuery = null;
-        }
+    /**
+     * Wrap a Netty request and a body buffer.
+     *
+     * @param nettyRequest the decoded HTTP request head (method, URI, headers)
+     * @param bodyBuf      the accumulated body (may be {@code EMPTY_BUFFER})
+     * @param remoteAddr   pre-resolved remote IP string
+     */
+    public FountainPoolRequest(HttpRequest nettyRequest, ByteBuf bodyBuf, String remoteAddr) {
+        this.nettyRequest = Objects.requireNonNull(nettyRequest, "nettyRequest");
+        this.bodyBuf = Objects.requireNonNull(bodyBuf, "bodyBuf");
+        this.remoteAddr = remoteAddr != null ? remoteAddr : "";
     }
 
-    private Map<String, List<String>> queryParameters() {
-        if (queryParameters == null) {
-            queryParameters = (rawQuery != null) ? parseQueryString(rawQuery) : Collections.emptyMap();
-        }
-        return queryParameters;
-    }
+    // ---- Request line (lazy) ----
 
+    @Override
     public HttpMethod method() {
-        return method;
+        HttpMethod m = method;
+        if (m == null) {
+            m = HttpMethod.resolve(nettyRequest.method().name());
+            method = m;
+        }
+        return m;
     }
 
+    @Override
     public String uri() {
-        return uri;
+        return nettyRequest.uri();
     }
 
+    @Override
     public String path() {
+        ensurePathParsed();
         return path;
     }
 
+    @Override
     public HttpVersion version() {
-        return version;
+        HttpVersion v = version;
+        if (v == null) {
+            v = HttpVersion.resolve(nettyRequest.protocolVersion().text());
+            version = v;
+        }
+        return v;
     }
 
+    // ---- Headers (zero-copy wrap) ----
+
+    @Override
     public HttpHeaders headers() {
-        return headers;
+        HttpHeaders h = wrappedHeaders;
+        if (h == null) {
+            h = HttpHeaders.wrap(nettyRequest.headers());
+            wrappedHeaders = h;
+        }
+        return h;
     }
 
-    /**
-     * Returns the request body as a byte array.
-     * <p>
-     * If the request was constructed with a {@link ByteBuf}, the array is
-     * materialized lazily on first call and cached for subsequent calls.
-     * GET / no-body requests return an empty array with zero allocation.
-     */
+    @Override
+    public String header(String name) {
+        return headers().get(name);
+    }
+
+    @Override
+    public String contentType() {
+        return nettyRequest.headers().get("Content-Type");
+    }
+
+    @Override
+    public long contentLength() {
+        String value = nettyRequest.headers().get("Content-Length");
+        return (value != null) ? Long.parseLong(value) : -1;
+    }
+
+    // ---- Body (lazy materialization) ----
+
+    @Override
     public byte[] body() {
-        if (bodyBytes != null) {
-            return bodyBytes;
+        byte[] b = bodyBytes;
+        if (b != null) {
+            return b;
         }
-        if (bodyBuf == null || !bodyBuf.isReadable()) {
-            bodyBytes = EMPTY_BODY;
+        if (!bodyBuf.isReadable()) {
+            b = EMPTY_BODY;
         } else {
-            bodyBytes = new byte[bodyBuf.readableBytes()];
-            bodyBuf.getBytes(bodyBuf.readerIndex(), bodyBytes);
+            b = new byte[bodyBuf.readableBytes()];
+            bodyBuf.getBytes(bodyBuf.readerIndex(), b);
         }
-        return bodyBytes;
+        bodyBytes = b;
+        return b;
     }
 
+    @Override
     public String bodyAsString() {
         return bodyAsString(StandardCharsets.UTF_8);
     }
 
+    @Override
     public String bodyAsString(Charset charset) {
         byte[] b = body();
         return (b.length > 0) ? new String(b, charset) : "";
     }
 
-    /**
-     * Releases the underlying {@link ByteBuf} if one is held.
-     * Must be called after handler processing to avoid buffer leaks.
-     */
-    public void release() {
-        if (bodyBuf != null && bodyBuf.refCnt() > 0) {
-            bodyBuf.release();
-        }
-    }
+    // ---- Query parameters (lazy parsing) ----
 
-    public String remoteAddress() {
-        return remoteAddress;
-    }
-
+    @Override
     public String queryParameter(String name) {
         List<String> values = queryParameters().get(name);
         return (values != null && !values.isEmpty()) ? values.getFirst() : null;
     }
 
+    @Override
     public List<String> queryParameters(String name) {
         return queryParameters().getOrDefault(name, Collections.emptyList());
     }
 
+    @Override
     public Map<String, List<String>> allQueryParameters() {
         return Collections.unmodifiableMap(queryParameters());
     }
 
-    public String header(String name) {
-        return headers.get(name);
+    // ---- Connection metadata ----
+
+    @Override
+    public String remoteAddress() {
+        return remoteAddr;
     }
 
-    public String contentType() {
-        return headers.get("Content-Type");
-    }
-
-    public long contentLength() {
-        String value = headers.get("Content-Length");
-        return (value != null) ? Long.parseLong(value) : -1;
-    }
-
+    @Override
     public boolean isKeepAlive() {
-        String connection = headers.get("Connection");
-        if (version == HttpVersion.HTTP_1_1) {
-            return !"close".equalsIgnoreCase(connection);
+        return HttpUtil.isKeepAlive(nettyRequest);
+    }
+
+    // ---- Lifecycle ----
+
+    @Override
+    public void release() {
+        if (bodyBuf.refCnt() > 0) {
+            bodyBuf.release();
         }
-        return "keep-alive".equalsIgnoreCase(connection);
+    }
+
+    // ---- Internal helpers ----
+
+    private void ensurePathParsed() {
+        if (!pathParsed) {
+            String uri = nettyRequest.uri();
+            int queryIndex = uri.indexOf('?');
+            if (queryIndex >= 0) {
+                path = uri.substring(0, queryIndex);
+                rawQuery = uri.substring(queryIndex + 1);
+            } else {
+                path = uri;
+                rawQuery = null;
+            }
+            pathParsed = true;
+        }
+    }
+
+    private Map<String, List<String>> queryParameters() {
+        Map<String, List<String>> qp = queryParameters;
+        if (qp == null) {
+            ensurePathParsed();
+            qp = (rawQuery != null) ? parseQueryString(rawQuery) : Collections.emptyMap();
+            queryParameters = qp;
+        }
+        return qp;
     }
 
     private static Map<String, List<String>> parseQueryString(String queryString) {
@@ -186,19 +234,24 @@ public class FountainPoolRequest {
 
     @Override
     public String toString() {
-        return method + " " + uri + " " + version;
+        return method() + " " + uri() + " " + version();
     }
 
+    // ---- Static factory for testing / non-Netty usage ----
+
+    /**
+     * Build a request from raw values — primarily for testing.
+     * For production (Netty pipeline), use the constructor directly.
+     */
     public static Builder builder() {
         return new Builder();
     }
 
-    public static class Builder {
+    public static final class Builder {
         private HttpMethod method = HttpMethod.GET;
         private String uri = "/";
         private HttpVersion version = HttpVersion.HTTP_1_1;
         private HttpHeaders headers = new HttpHeaders();
-        private ByteBuf bodyBuf;
         private byte[] bodyBytes;
         private String remoteAddress = "";
 
@@ -222,22 +275,8 @@ public class FountainPoolRequest {
             return this;
         }
 
-        /**
-         * Set the body as a retained {@link ByteBuf}. The caller must have already
-         * called {@link ByteBuf#retain()} if the buffer comes from a Netty pipeline.
-         * The byte array will be materialized lazily on first {@link #body()} call.
-         */
-        public Builder bodyBuf(ByteBuf bodyBuf) {
-            this.bodyBuf = bodyBuf;
-            return this;
-        }
-
-        /**
-         * Set the body as a pre-materialized byte array (for testing or non-Netty usage).
-         */
         public Builder body(byte[] body) {
             this.bodyBytes = body;
-            this.bodyBuf = null;
             return this;
         }
 
@@ -247,7 +286,30 @@ public class FountainPoolRequest {
         }
 
         public FountainPoolRequest build() {
-            return new FountainPoolRequest(this);
+            // Build a minimal Netty HttpRequest for the adapter
+            io.netty.handler.codec.http.DefaultHttpRequest nettyReq =
+                    new io.netty.handler.codec.http.DefaultHttpRequest(
+                            io.netty.handler.codec.http.HttpVersion.valueOf(version.text()),
+                            io.netty.handler.codec.http.HttpMethod.valueOf(method.name()),
+                            uri
+                    );
+            // Copy headers into Netty's header object
+            if (headers != null) {
+                for (Map.Entry<String, List<String>> entry : headers) {
+                    for (String value : entry.getValue()) {
+                        nettyReq.headers().add(entry.getKey(), value);
+                    }
+                }
+            }
+
+            ByteBuf bodyBuf;
+            if (bodyBytes != null && bodyBytes.length > 0) {
+                bodyBuf = io.netty.buffer.Unpooled.wrappedBuffer(bodyBytes);
+            } else {
+                bodyBuf = io.netty.buffer.Unpooled.EMPTY_BUFFER;
+            }
+
+            return new FountainPoolRequest(nettyReq, bodyBuf, remoteAddress);
         }
     }
 }
