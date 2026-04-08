@@ -152,7 +152,7 @@ public class Router {
     public HttpResponse handle(FountainPoolRequest request) throws Exception {
         RouteTrie trie = routeTries.get(request.method());
         if (trie == null) {
-            return null;
+            return HttpResponse.notFound();
         }
 
         String[] requestSegments = splitPath(request.path());

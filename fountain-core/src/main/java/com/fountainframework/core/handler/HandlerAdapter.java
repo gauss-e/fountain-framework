@@ -65,6 +65,10 @@ public final class HandlerAdapter {
      * @param bodyType the Class token for R — captured at registration time, used for deserialization
      */
     public <R> RouteHandler adapt(Class<R> bodyType, FountainHandler<? super R, ?> handler) {
+        // Warmup: trigger serializer/deserializer cache population at registration time,
+        // so the first real request to this route avoids Jackson's cold-start introspection.
+        bodyReader.warmup(bodyType);
+
         return () -> {
             R body = bodyReader.read(FountainContext.current().body(), bodyType);
             Object result = handler.handle(body);

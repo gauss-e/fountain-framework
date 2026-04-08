@@ -11,7 +11,12 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.handler.codec.http.*;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpHeaderValues;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,23 +51,29 @@ public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpReq
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest nettyRequest) {
+        // Retain the request so its ByteBuf and headers survive past channelRead0.
+        // The virtual thread's finally block will release via request.release().
+        nettyRequest.retain();
         FountainPoolRequest request = convertRequest(ctx, nettyRequest);
-        boolean keepAlive = request.isKeepAlive();
+        boolean keepAlive = HttpUtil.isKeepAlive(nettyRequest);
 
         log.debug("{} {} from {}", request.method(), request.path(), request.remoteAddress());
 
         if (!concurrencyLimiter.tryAcquire()) {
             log.warn("Server overloaded, rejecting {} {}", request.method(), request.path());
-            ctx.channel().eventLoop().execute(() ->
-                    writeResponse(ctx, keepAlive, HttpResponse.serviceUnavailable()));
+            request.release();
+            writeResponse(ctx, keepAlive, HttpResponse.serviceUnavailable());
             return;
         }
 
         virtualThreadPool.execute(() -> {
             try {
-                HttpResponse response = dispatch(request);
-                ctx.channel().eventLoop().execute(() -> writeResponse(ctx, keepAlive, response));
+                // Netty's writeAndFlush is thread-safe — it internally routes to the
+                // event loop, so an explicit eventLoop().execute() wrapper is redundant
+                // and adds an unnecessary queuing hop.
+                writeResponse(ctx, keepAlive, dispatch(request));
             } finally {
+                request.release();
                 concurrencyLimiter.release();
             }
         });
@@ -79,17 +90,13 @@ public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpReq
     }
 
     private FountainPoolRequest convertRequest(ChannelHandlerContext ctx, FullHttpRequest nettyRequest) {
-        HttpHeaders headers = new HttpHeaders();
-        for (Map.Entry<String, String> entry : nettyRequest.headers()) {
-            headers.add(entry.getKey(), entry.getValue());
-        }
+        // Zero-copy header wrapping — delegates reads to Netty's headers directly
+        HttpHeaders headers = HttpHeaders.wrap(nettyRequest.headers());
 
-        byte[] body = new byte[0];
+        // Zero-copy body — hold the ByteBuf reference; byte[] is materialized
+        // lazily only when the handler actually calls body(). GET requests and
+        // other no-body requests skip allocation entirely.
         ByteBuf content = nettyRequest.content();
-        if (content.isReadable()) {
-            body = new byte[content.readableBytes()];
-            content.readBytes(body);
-        }
 
         String remoteAddress = "";
         if (ctx.channel().remoteAddress() instanceof InetSocketAddress inet) {
@@ -101,7 +108,7 @@ public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpReq
                 .uri(nettyRequest.uri())
                 .version(HttpVersion.resolve(nettyRequest.protocolVersion().text()))
                 .headers(headers)
-                .body(body)
+                .bodyBuf(content)
                 .remoteAddress(remoteAddress)
                 .build();
     }
@@ -124,11 +131,11 @@ public class FountainHttpHandler extends SimpleChannelInboundHandler<FullHttpReq
         nettyResponse.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, body.length);
 
         if (keepAlive) {
-            nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
-            ctx.writeAndFlush(nettyResponse);
+            ctx.write(nettyResponse);
         } else {
-            ctx.writeAndFlush(nettyResponse).addListener(ChannelFutureListener.CLOSE);
+            ctx.write(nettyResponse).addListener(ChannelFutureListener.CLOSE);
         }
+        ctx.flush();
     }
 
     @Override

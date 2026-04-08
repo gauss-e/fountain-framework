@@ -1,12 +1,12 @@
 package com.fountainframework.core.server;
 
+import com.fountainframework.core.config.FountainConfig;
 import com.fountainframework.core.router.Router;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.channel.WriteBufferWaterMark;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,10 +17,12 @@ import java.util.concurrent.Semaphore;
 /**
  * Netty-based HTTP server with virtual-thread-per-task execution.
  * <p>
- * Netty NIO event loops handle I/O (accept, read, write).
+ * Netty event loops handle I/O (accept, read, write). The best available transport
+ * is selected automatically via {@link NativeTransport} — epoll on Linux, kqueue on
+ * macOS, NIO as universal fallback.
+ * <p>
  * Handler business logic is dispatched to virtual threads — one per request.
  * A {@link Semaphore} caps concurrency to prevent unbounded resource usage under load.
- * Default max concurrency: 1000, configurable via constructor.
  */
 public class FountainServer {
 
@@ -29,6 +31,7 @@ public class FountainServer {
 
     private final int port;
     private final Router router;
+    private final FountainConfig config;
     private final int maxConcurrency;
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
@@ -37,31 +40,56 @@ public class FountainServer {
     private Channel serverChannel;
 
     public FountainServer(int port, Router router) {
-        this(port, router, DEFAULT_MAX_CONCURRENCY);
+        this(port, router, DEFAULT_MAX_CONCURRENCY, null);
     }
 
     public FountainServer(int port, Router router, int maxConcurrency) {
+        this(port, router, maxConcurrency, null);
+    }
+
+    public FountainServer(int port, Router router, int maxConcurrency, FountainConfig config) {
         this.port = port;
         this.router = router;
         this.maxConcurrency = maxConcurrency;
+        this.config = config;
     }
 
     public void start() throws InterruptedException {
         virtualThreadPool = Executors.newVirtualThreadPerTaskExecutor();
         concurrencyLimiter = new Semaphore(maxConcurrency);
 
-        bossGroup = new NioEventLoopGroup(1);
-        workerGroup = new NioEventLoopGroup();
+        // Auto-detect best transport: epoll (Linux) > kqueue (macOS) > NIO (fallback)
+        bossGroup = NativeTransport.newEventLoopGroup(1);
+        workerGroup = NativeTransport.newEventLoopGroup(0);
+
+        // Resolve socket options from config (or use sensible defaults)
+        int soBacklog       = configOr(c -> c.getSoBacklog(), 1024);
+        boolean tcpNodelay  = configOr(c -> c.getTcpNodelay(), true);
+        boolean soReuseaddr = configOr(c -> c.getSoReuseaddr(), true);
+        boolean soKeepalive = configOr(c -> c.getSoKeepalive(), true);
+        int writeBufLow     = configOr(c -> c.getWriteBufferLow(), 32 * 1024);
+        int writeBufHigh    = configOr(c -> c.getWriteBufferHigh(), 64 * 1024);
 
         ServerBootstrap bootstrap = new ServerBootstrap();
         bootstrap.group(bossGroup, workerGroup)
-                .channel(NioServerSocketChannel.class)
+                .channel(NativeTransport.serverChannelClass())
                 .childHandler(new FountainChannelInitializer(router, virtualThreadPool, concurrencyLimiter))
-                .option(ChannelOption.SO_BACKLOG, 1024)
-                .childOption(ChannelOption.SO_KEEPALIVE, true);
+                // ---- Server socket options ----
+                .option(ChannelOption.SO_BACKLOG, soBacklog)
+                .option(ChannelOption.SO_REUSEADDR, soReuseaddr)
+                // ---- Child (connection) socket options ----
+                .childOption(ChannelOption.SO_KEEPALIVE, soKeepalive)
+                .childOption(ChannelOption.TCP_NODELAY, tcpNodelay)
+                .childOption(ChannelOption.WRITE_BUFFER_WATER_MARK,
+                        new WriteBufferWaterMark(writeBufLow, writeBufHigh));
 
         serverChannel = bootstrap.bind(port).sync().channel();
-        log.info("Fountain server started on port {} (max concurrency: {})", port, maxConcurrency);
+        log.info("Fountain server started on port {} (transport: {}, max concurrency: {})",
+                port, NativeTransport.name(), maxConcurrency);
+    }
+
+    private <T> T configOr(java.util.function.Function<FountainConfig, T> getter, T defaultValue) {
+        return (config != null) ? getter.apply(config) : defaultValue;
     }
 
     public Semaphore concurrencyLimiter() {

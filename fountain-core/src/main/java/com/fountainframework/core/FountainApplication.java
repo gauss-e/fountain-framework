@@ -9,8 +9,11 @@ import com.fountainframework.core.router.Router;
 import com.fountainframework.core.serialize.BodyReader;
 import com.fountainframework.core.serialize.JacksonBodyReader;
 import com.fountainframework.core.serialize.JacksonResponseWriter;
+import com.fountainframework.core.serialize.ObjectMapperFactory;
 import com.fountainframework.core.serialize.ResponseWriter;
 import com.fountainframework.core.server.FountainServer;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,9 +54,12 @@ public class FountainApplication {
 
     /**
      * Create with default Jackson-based serialization and the given config.
+     * A single {@link ObjectMapper} is shared between reader and writer to avoid
+     * duplicate serializer caches and enable unified DTO warmup.
      */
     public static FountainApplication create(FountainConfig config) {
-        return create(config, new JacksonBodyReader(), new JacksonResponseWriter());
+        ObjectMapper sharedMapper = ObjectMapperFactory.create();
+        return create(config, new JacksonBodyReader(sharedMapper), new JacksonResponseWriter(sharedMapper));
     }
 
     /**
@@ -171,7 +177,7 @@ public class FountainApplication {
      */
     public void start(int port) {
         int maxConcurrency = config.getMaxConcurrency();
-        server = new FountainServer(port, router, maxConcurrency);
+        server = new FountainServer(port, router, maxConcurrency, config);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (server != null) {

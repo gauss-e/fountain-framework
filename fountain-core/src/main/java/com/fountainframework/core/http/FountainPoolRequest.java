@@ -1,5 +1,8 @@
 package com.fountainframework.core.http;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+
 import java.net.URLDecoder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -8,8 +11,22 @@ import java.util.*;
 /**
  * Represents an HTTP request received by the Fountain server.
  * Encapsulates all information from the raw HTTP request per RFC 7230-7235.
+ * <p>
+ * <b>Zero-copy optimizations:</b>
+ * <ul>
+ *   <li>Body is held as a Netty {@link ByteBuf} and only materialized to {@code byte[]}
+ *       on first access via {@link #body()}. GET requests and other no-body requests
+ *       never allocate a body array.</li>
+ *   <li>Headers can wrap Netty's headers directly via {@link HttpHeaders#wrap} —
+ *       see {@link FountainPoolRequest.Builder#headers(HttpHeaders)}.</li>
+ * </ul>
+ * <p>
+ * When the request holds a retained {@link ByteBuf}, callers <b>must</b> invoke
+ * {@link #release()} after processing to return the buffer to the pool.
  */
 public class FountainPoolRequest {
+
+    private static final byte[] EMPTY_BODY = new byte[0];
 
     private final HttpMethod method;
     private final String uri;
@@ -18,16 +35,21 @@ public class FountainPoolRequest {
     private volatile Map<String, List<String>> queryParameters;
     private final HttpVersion version;
     private final HttpHeaders headers;
-    private final byte[] body;
     private final String remoteAddress;
+
+    /** Netty ByteBuf — may be null (no body) or EMPTY_BUFFER. */
+    private final ByteBuf bodyBuf;
+    /** Lazily materialized from bodyBuf on first access. */
+    private byte[] bodyBytes;
 
     private FountainPoolRequest(Builder builder) {
         this.method = builder.method;
         this.uri = builder.uri;
         this.version = builder.version;
         this.headers = builder.headers;
-        this.body = builder.body;
         this.remoteAddress = builder.remoteAddress;
+        this.bodyBuf = builder.bodyBuf;
+        this.bodyBytes = builder.bodyBytes;
 
         // Only split path from query — defer query parsing until first access
         int queryIndex = uri.indexOf('?');
@@ -67,8 +89,24 @@ public class FountainPoolRequest {
         return headers;
     }
 
+    /**
+     * Returns the request body as a byte array.
+     * <p>
+     * If the request was constructed with a {@link ByteBuf}, the array is
+     * materialized lazily on first call and cached for subsequent calls.
+     * GET / no-body requests return an empty array with zero allocation.
+     */
     public byte[] body() {
-        return body;
+        if (bodyBytes != null) {
+            return bodyBytes;
+        }
+        if (bodyBuf == null || !bodyBuf.isReadable()) {
+            bodyBytes = EMPTY_BODY;
+        } else {
+            bodyBytes = new byte[bodyBuf.readableBytes()];
+            bodyBuf.getBytes(bodyBuf.readerIndex(), bodyBytes);
+        }
+        return bodyBytes;
     }
 
     public String bodyAsString() {
@@ -76,7 +114,18 @@ public class FountainPoolRequest {
     }
 
     public String bodyAsString(Charset charset) {
-        return (body != null && body.length > 0) ? new String(body, charset) : "";
+        byte[] b = body();
+        return (b.length > 0) ? new String(b, charset) : "";
+    }
+
+    /**
+     * Releases the underlying {@link ByteBuf} if one is held.
+     * Must be called after handler processing to avoid buffer leaks.
+     */
+    public void release() {
+        if (bodyBuf != null && bodyBuf.refCnt() > 0) {
+            bodyBuf.release();
+        }
     }
 
     public String remoteAddress() {
@@ -149,7 +198,8 @@ public class FountainPoolRequest {
         private String uri = "/";
         private HttpVersion version = HttpVersion.HTTP_1_1;
         private HttpHeaders headers = new HttpHeaders();
-        private byte[] body = new byte[0];
+        private ByteBuf bodyBuf;
+        private byte[] bodyBytes;
         private String remoteAddress = "";
 
         public Builder method(HttpMethod method) {
@@ -172,8 +222,22 @@ public class FountainPoolRequest {
             return this;
         }
 
+        /**
+         * Set the body as a retained {@link ByteBuf}. The caller must have already
+         * called {@link ByteBuf#retain()} if the buffer comes from a Netty pipeline.
+         * The byte array will be materialized lazily on first {@link #body()} call.
+         */
+        public Builder bodyBuf(ByteBuf bodyBuf) {
+            this.bodyBuf = bodyBuf;
+            return this;
+        }
+
+        /**
+         * Set the body as a pre-materialized byte array (for testing or non-Netty usage).
+         */
         public Builder body(byte[] body) {
-            this.body = body;
+            this.bodyBytes = body;
+            this.bodyBuf = null;
             return this;
         }
 

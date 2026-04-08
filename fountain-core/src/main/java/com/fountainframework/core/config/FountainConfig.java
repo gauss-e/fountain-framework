@@ -171,6 +171,14 @@ public final class FountainConfig {
         }
     }
 
+    public boolean getBoolean(String key, boolean defaultValue) {
+        String value = properties.getProperty(key);
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        return Boolean.parseBoolean(value.trim());
+    }
+
     // ---- Convenience methods for known keys ----
 
     public int getPort() {
@@ -179,5 +187,31 @@ public final class FountainConfig {
 
     public int getMaxConcurrency() {
         return getInt(FountainServerProperties.SERVER_MAX_CONCURRENCY, FountainServerProperties.SERVER_MAX_CONCURRENCY_DEFAULT);
+    }
+
+    // ---- Network tuning ----
+
+    public int getSoBacklog() {
+        return getInt(FountainServerProperties.SERVER_SO_BACKLOG, FountainServerProperties.SERVER_SO_BACKLOG_DEFAULT);
+    }
+
+    public boolean getTcpNodelay() {
+        return getBoolean(FountainServerProperties.SERVER_TCP_NODELAY, FountainServerProperties.SERVER_TCP_NODELAY_DEFAULT);
+    }
+
+    public boolean getSoReuseaddr() {
+        return getBoolean(FountainServerProperties.SERVER_SO_REUSEADDR, FountainServerProperties.SERVER_SO_REUSEADDR_DEFAULT);
+    }
+
+    public boolean getSoKeepalive() {
+        return getBoolean(FountainServerProperties.SERVER_SO_KEEPALIVE, FountainServerProperties.SERVER_SO_KEEPALIVE_DEFAULT);
+    }
+
+    public int getWriteBufferLow() {
+        return getInt(FountainServerProperties.SERVER_WRITE_BUFFER_LOW, FountainServerProperties.SERVER_WRITE_BUFFER_LOW_DEFAULT);
+    }
+
+    public int getWriteBufferHigh() {
+        return getInt(FountainServerProperties.SERVER_WRITE_BUFFER_HIGH, FountainServerProperties.SERVER_WRITE_BUFFER_HIGH_DEFAULT);
     }
 }
