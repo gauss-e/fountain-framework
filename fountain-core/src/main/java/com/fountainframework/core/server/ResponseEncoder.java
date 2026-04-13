@@ -2,6 +2,7 @@ package com.fountainframework.core.server;
 
 import com.fountainframework.core.http.HttpResponse;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultHttpContent;
@@ -40,9 +41,20 @@ final class ResponseEncoder {
     }
 
     /**
+     * Large-body threshold: responses larger than this are written in chunks
+     * with per-chunk backpressure checks to avoid flooding the write buffer.
+     * Smaller responses use a single zero-copy wrappedBuffer write.
+     */
+    private static final int LARGE_BODY_THRESHOLD = 64 * 1024;
+
+    /**
      * Stream the response to the channel from a virtual thread.
-     * Body is written in direct-memory chunks; each chunk is preceded by a
-     * writability check that may park the virtual thread under backpressure.
+     * <p>
+     * Small/medium bodies (≤ 64 KB): written as a single zero-copy
+     * {@link Unpooled#wrappedBuffer} — no direct-buffer allocation, no copy.
+     * <p>
+     * Large bodies (> 64 KB): written in chunks with per-chunk backpressure
+     * checks via {@link Unpooled#wrappedBuffer} slices (still zero-copy per chunk).
      */
     void writeResponse(ChannelHandlerContext ctx, boolean keepAlive, HttpResponse response) {
         if (!ctx.channel().isActive()) return;
@@ -55,17 +67,25 @@ final class ResponseEncoder {
 
         ctx.write(buildHead(response, body.length, keepAlive));
 
-        // 2. Body chunks via direct ByteBuf
-        int offset = 0;
-        while (offset < body.length) {
-            backpressure.awaitWritable(ctx);
-            if (!ctx.channel().isActive()) return;
-
-            int chunkLen = Math.min(WRITE_CHUNK_SIZE, body.length - offset);
-            ByteBuf chunk = ctx.alloc().directBuffer(chunkLen);
-            chunk.writeBytes(body, offset, chunkLen);
-            ctx.write(new DefaultHttpContent(chunk));
-            offset += chunkLen;
+        // 2. Body — zero-copy via wrappedBuffer (no heap→direct copy)
+        if (body.length > 0) {
+            if (body.length <= LARGE_BODY_THRESHOLD) {
+                // Single write — wraps the byte[] without copying
+                backpressure.awaitWritable(ctx);
+                if (!ctx.channel().isActive()) return;
+                ctx.write(new DefaultHttpContent(Unpooled.wrappedBuffer(body)));
+            } else {
+                // Chunked write for large bodies — still zero-copy per chunk
+                int offset = 0;
+                while (offset < body.length) {
+                    backpressure.awaitWritable(ctx);
+                    if (!ctx.channel().isActive()) return;
+                    int chunkLen = Math.min(WRITE_CHUNK_SIZE, body.length - offset);
+                    ctx.write(new DefaultHttpContent(
+                            Unpooled.wrappedBuffer(body, offset, chunkLen)));
+                    offset += chunkLen;
+                }
+            }
         }
 
         // 3. End of response
@@ -85,9 +105,8 @@ final class ResponseEncoder {
         ctx.write(buildHead(response, body.length, keepAlive));
 
         if (body.length > 0) {
-            ByteBuf content = ctx.alloc().directBuffer(body.length);
-            content.writeBytes(body);
-            ctx.write(new DefaultHttpContent(content));
+            // Zero-copy: wraps the byte[] without allocating a direct buffer
+            ctx.write(new DefaultHttpContent(Unpooled.wrappedBuffer(body)));
         }
 
         flushLast(ctx, keepAlive);

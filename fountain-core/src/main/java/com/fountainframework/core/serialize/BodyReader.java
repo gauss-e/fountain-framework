@@ -1,5 +1,7 @@
 package com.fountainframework.core.serialize;
 
+import java.io.InputStream;
+
 /**
  * Deserializes a request body into a typed object.
  * <p>
@@ -9,6 +11,16 @@ package com.fountainframework.core.serialize;
 public interface BodyReader {
 
     <T> T read(byte[] body, Class<T> type) throws Exception;
+
+    /**
+     * Deserialize from an {@link InputStream} — allows zero-copy reads when the
+     * transport provides a stream view over its buffer (e.g. Netty ByteBufInputStream).
+     * <p>
+     * Default implementation falls back to {@link #read(byte[], Class)} by draining the stream.
+     */
+    default <T> T read(InputStream body, Class<T> type) throws Exception {
+        return read(body.readAllBytes(), type);
+    }
 
     /**
      * Pre-warm internal caches (serializer lookups, type metadata) for the given type.

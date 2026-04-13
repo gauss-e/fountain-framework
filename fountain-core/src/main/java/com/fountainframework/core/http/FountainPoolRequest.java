@@ -1,9 +1,11 @@
 package com.fountainframework.core.http;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufInputStream;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpUtil;
 
+import java.io.InputStream;
 import java.net.URLDecoder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -135,6 +137,21 @@ public final class FountainPoolRequest implements FountainRequest {
         }
         bodyBytes = b;
         return b;
+    }
+
+    /**
+     * Zero-copy stream view over the body ByteBuf.
+     * <p>
+     * Jackson (and other deserializers) can read incrementally from the
+     * returned stream without materializing the entire body into a byte[].
+     * The stream reads directly from the underlying ByteBuf memory.
+     */
+    @Override
+    public InputStream bodyAsStream() {
+        if (!bodyBuf.isReadable()) {
+            return InputStream.nullInputStream();
+        }
+        return new ByteBufInputStream(bodyBuf, bodyBuf.readableBytes());
     }
 
     @Override

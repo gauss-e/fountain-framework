@@ -1,5 +1,7 @@
 package com.fountainframework.core.http;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +65,17 @@ public interface FountainRequest {
 
     /** Request body decoded with the given charset. */
     String bodyAsString(Charset charset);
+
+    /**
+     * Returns the request body as an {@link InputStream}.
+     * <p>
+     * Implementations backed by a pooled buffer (e.g. Netty ByteBuf) should
+     * return a stream that reads directly from the buffer without copying.
+     * Default implementation wraps {@link #body()} — still useful for test stubs.
+     */
+    default InputStream bodyAsStream() {
+        return new ByteArrayInputStream(body());
+    }
 
     // ---- Query parameters ----
 

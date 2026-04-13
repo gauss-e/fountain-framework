@@ -72,7 +72,6 @@ public class FountainApplication {
     }
 
     // ---- ContextHandler delegates ----
-
     public FountainApplication get(String path, ContextHandler<?> handler) {
         router.get(path, handler);
         return this;
@@ -148,7 +147,6 @@ public class FountainApplication {
     }
 
     // ---- Groups ----
-
     public FountainApplication group(String prefix, Consumer<Router> configure) {
         router.group(prefix, configure);
         return this;

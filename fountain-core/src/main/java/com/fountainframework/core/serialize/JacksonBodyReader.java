@@ -2,6 +2,8 @@ package com.fountainframework.core.serialize;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.InputStream;
+
 /**
  * Default {@link BodyReader} implementation backed by Jackson.
  * <p>
@@ -29,6 +31,15 @@ public final class JacksonBodyReader implements BodyReader {
 
     @Override
     public <T> T read(byte[] body, Class<T> type) throws Exception {
+        return objectMapper.readValue(body, type);
+    }
+
+    /**
+     * Zero-copy deserialization from an {@link InputStream}.
+     * Jackson reads incrementally from the stream — no intermediate byte[] allocation.
+     */
+    @Override
+    public <T> T read(InputStream body, Class<T> type) throws Exception {
         return objectMapper.readValue(body, type);
     }
 

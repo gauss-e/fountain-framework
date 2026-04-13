@@ -70,7 +70,9 @@ public final class HandlerAdapter {
         bodyReader.warmup(bodyType);
 
         return () -> {
-            R body = bodyReader.read(FountainContext.current().body(), bodyType);
+            // Use InputStream path — reads directly from the underlying ByteBuf
+            // without materializing the full body into a byte[].
+            R body = bodyReader.read(FountainContext.current().request().bodyAsStream(), bodyType);
             Object result = handler.handle(body);
             return responseWriter.write(result);
         };

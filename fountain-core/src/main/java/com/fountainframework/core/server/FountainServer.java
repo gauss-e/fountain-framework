@@ -19,7 +19,7 @@ import java.util.concurrent.Semaphore;
 /**
  * Netty-based HTTP server with virtual-thread-per-task execution.
  * <p>
- * Netty event loops handle I/O (accept, read, write). The best available transport
+ * Netty event loops handle I/O(accept, read, write). The best available transport
  * is selected automatically via {@link NativeTransport} — epoll on Linux, kqueue on
  * macOS, NIO as universal fallback.
  * <p>
@@ -29,7 +29,6 @@ import java.util.concurrent.Semaphore;
 public class FountainServer {
 
     private static final Logger log = LoggerFactory.getLogger(FountainServer.class);
-    private static final int DEFAULT_MAX_CONCURRENCY = 1000;
 
     private final int port;
     private final Router router;
@@ -38,16 +37,7 @@ public class FountainServer {
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private ExecutorService virtualThreadPool;
-    private Semaphore concurrencyLimiter;
     private Channel serverChannel;
-
-    public FountainServer(int port, Router router) {
-        this(port, router, DEFAULT_MAX_CONCURRENCY, null);
-    }
-
-    public FountainServer(int port, Router router, int maxConcurrency) {
-        this(port, router, maxConcurrency, null);
-    }
 
     public FountainServer(int port, Router router, int maxConcurrency, FountainConfig config) {
         this.port = port;
@@ -58,31 +48,32 @@ public class FountainServer {
 
     public void start() throws InterruptedException {
         virtualThreadPool = Executors.newVirtualThreadPerTaskExecutor();
-        concurrencyLimiter = new Semaphore(maxConcurrency);
+        Semaphore concurrencyLimiter = new Semaphore(maxConcurrency);
 
         // Auto-detect best transport: epoll (Linux) > kqueue (macOS) > NIO (fallback)
         bossGroup = NativeTransport.newEventLoopGroup(1);
         workerGroup = NativeTransport.newEventLoopGroup(0);
 
         // Resolve socket options from config (or use sensible defaults)
-        int soBacklog       = configOr(c -> c.getSoBacklog(), 1024);
-        boolean tcpNodelay  = configOr(c -> c.getTcpNodelay(), true);
-        boolean soReuseaddr = configOr(c -> c.getSoReuseaddr(), true);
-        boolean soKeepalive = configOr(c -> c.getSoKeepalive(), true);
-        int writeBufLow     = configOr(c -> c.getWriteBufferLow(), 32 * 1024);
-        int writeBufHigh    = configOr(c -> c.getWriteBufferHigh(), 64 * 1024);
+        int soBacklog       = configOr(FountainConfig::getSoBacklog, 1024);
+        boolean tcpNoDelay  = configOr(FountainConfig::getTcpNodelay, true);
+        boolean soReuseaddr = configOr(FountainConfig::getSoReuseaddr, true);
+        boolean soKeepalive = configOr(FountainConfig::getSoKeepalive, true);
+        int writeBufLow     = configOr(FountainConfig::getWriteBufferLow, 32 * 1024);
+        int writeBufHigh    = configOr(FountainConfig::getWriteBufferHigh, 64 * 1024);
 
         ServerBootstrap bootstrap = new ServerBootstrap();
         bootstrap.group(bossGroup, workerGroup)
                 .channel(NativeTransport.serverChannelClass())
-                .childHandler(new FountainChannelInitializer(router, virtualThreadPool, concurrencyLimiter))
+                .childHandler(new FountainChannelInitializer(router, virtualThreadPool,
+                    concurrencyLimiter))
                 // ---- Server socket options ----
                 .option(ChannelOption.SO_BACKLOG, soBacklog)
                 .option(ChannelOption.SO_REUSEADDR, soReuseaddr)
                 // ---- Child (connection) socket options ----
                 .childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT)
                 .childOption(ChannelOption.SO_KEEPALIVE, soKeepalive)
-                .childOption(ChannelOption.TCP_NODELAY, tcpNodelay)
+                .childOption(ChannelOption.TCP_NODELAY, tcpNoDelay)
                 .childOption(ChannelOption.WRITE_BUFFER_WATER_MARK,
                         new WriteBufferWaterMark(writeBufLow, writeBufHigh));
 
@@ -93,10 +84,6 @@ public class FountainServer {
 
     private <T> T configOr(Function<FountainConfig, T> getter, T defaultValue) {
         return (config != null) ? getter.apply(config) : defaultValue;
-    }
-
-    public Semaphore concurrencyLimiter() {
-        return concurrencyLimiter;
     }
 
     public void awaitTermination() throws InterruptedException {

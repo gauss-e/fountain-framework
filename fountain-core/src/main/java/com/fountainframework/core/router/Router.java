@@ -45,7 +45,6 @@ public class Router {
     }
 
     // ---- ContextHandler — receives FountainEntry (path params + query params) ----
-
     public Router get(String path, ContextHandler<?> handler) {
         return addRoute(HttpMethod.GET, path, adapter.adapt(handler));
     }
@@ -123,7 +122,6 @@ public class Router {
     }
 
     // ---- Route groups ----
-
     public Router group(String groupPrefix, Consumer<Router> configure) {
         Router sub = new Router(adapter, this.prefix + normalizePath(groupPrefix), this.routeTries);
         configure.accept(sub);
@@ -131,7 +129,6 @@ public class Router {
     }
 
     // ---- Internal ----
-
     private Router addRoute(HttpMethod method, String path, RouteHandler handler) {
         String fullPath = prefix + normalizePath(path);
         RouteEntry entry = new RouteEntry(method, fullPath, handler);
@@ -155,9 +152,9 @@ public class Router {
             return HttpResponse.notFound();
         }
 
-        String path = request.path();
-        String[] requestSegments = splitPath(path);
-        RouteTrie.MatchResult result = trie.match(requestSegments, path);
+        // Zero-allocation path matching — walks the trie directly on the raw
+        // path string using regionMatches, no splitPath / substring overhead.
+        RouteTrie.MatchResult result = trie.matchPath(request.path());
         if (result == null) {
             return null;
         }
